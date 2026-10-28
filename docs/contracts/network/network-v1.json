@@ -1,0 +1,42 @@
+{
+    "Intermediates": [
+        {
+            "ID": "L-01",
+            "TerrainLevel": 100.00,
+            "InvertLevel": 50.00,
+            "Depth": 50.0
+        }
+    ],
+    "Segments": [
+        {
+            "ID": "SEG-ABC",
+            "Connection": {
+                "kind": "DropPipe",
+                "InvertLevel": 10
+            },
+            "Pipe": {
+                "Material": "PVC",
+                "Length": 10.0,
+                "Slope": 0.56,
+                "Diameter": 0.05
+            },
+            "Intermediates": ["L-01"],
+            "IntermediateDistance": 20
+        }
+    ],
+    "Primary": [
+        {
+            "ID": "PV-01",
+            "TerrainLevel": 100.00,
+            "InvertLevel": 50.00,
+            "Depth": 50.0,
+            "UpstreamManholes": ["PV-02"],
+            "DownstreamConnection": ["PV-03","SEG-ABC"],
+            "psets": {
+                "Topo": {
+                    "RN": "11"
+                }
+            }
+        }
+    ]
+}

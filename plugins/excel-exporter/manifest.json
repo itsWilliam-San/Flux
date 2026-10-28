@@ -1,0 +1,48 @@
+{
+    "name": "Excel Exporter",
+    "description": "SANCAD to Excel. XLSV and CSV support",
+    "version": "1.0.0",
+    "author": "William",
+    "repository": "",
+    "download_url": "",
+    "icon": "",
+    "id": "com.william.excel-exporter",
+    "category": "exporter",
+    "exports": [
+        {
+            "id": "export_csv_detalhado",
+            "label": "Exportar Relatório (CSV)",
+            "description": "Gera um CSV completo com filtros avançados",
+            "entrypoint": "main.py:run_detailed_export",
+            "parameters": [
+                {
+                    "name": "separator",
+                    "param_type": "select",
+                    "label": "Separador",
+                    "options": [",", ";", "\t"],
+                    "default": ";"
+                },
+                {
+                    "name": "include_headers",
+                    "param_type": "boolean",
+                    "label": "Incluir cabeçalho?",
+                    "default": true
+                }
+            ]
+        },
+        {
+            "id": "export_xlsv_detalhado",
+            "label": "Exportar Relatório (XLSV)",
+            "description": "Gera um XLSV completo com filtros avançados",
+            "entrypoint": "main.py:run_export_csv",
+            "parameters": [
+                {
+                    "name": "sheet_name",
+                    "param_type": "string",
+                    "label": "Nome da Planilha",
+                    "default": "Relatorio"
+                }
+            ]
+        }
+    ]
+}

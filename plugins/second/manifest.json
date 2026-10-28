@@ -1,0 +1,27 @@
+{
+    "name": "Simpler Edition",
+    "description": "SANCAD to PDF (Custom)",
+    "version": "1.1.0",
+    "author": "Gabriel",
+    "repository": "",
+    "download_url": "",
+    "icon": "assets/happy-face.png",
+    "id": "com.gabriel.excel-exporter",
+    "category": "exporter",
+    "exports": [
+        {
+            "id": "export_pdf",
+            "label": "Exportar Relatório",
+            "description": "Gera um PDF customizado",
+            "entrypoint": "main.py:run_detailed_export",
+            "parameters": [
+                {
+                    "name": "colorir",
+                    "param_type": "boolean",
+                    "label": "Colorir Tabela",
+                    "default": true
+                }
+            ]
+        }
+    ]
+}
