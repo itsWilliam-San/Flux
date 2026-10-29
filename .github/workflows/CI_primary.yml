@@ -37,8 +37,6 @@ jobs:
               with:
                   persist-credential: false
 
-            - name: Setup Windows Environment
-
             - name: Install Linux Dependencies
               if: matrix.platform.os == 'linux'
               run: |
