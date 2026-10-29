@@ -33,7 +33,7 @@ jobs:
         runs-on: ${{ matrix.platform.runs_on }}
 
         steps:
-            - uses: actions/checkout@6
+            - uses: actions/checkout@v6
               with:
                   persist-credential: false
 
