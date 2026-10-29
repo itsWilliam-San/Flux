@@ -22,54 +22,56 @@ jobs:
             matrix:
                 platform:
                     - os: linux
-                        runs_on: ubuntu-latest
+                      runs_on: ubuntu-latest
                     - os: windows
-                        runs_on: windows-latest
+                      runs_on: windows-latest
                     - os: macos-intel
                       runs_on: macos-13
                     - os: macos-silicon
-                        runs_on: macos-latest
+                      runs_on: macos-latest
 
         runs-on: ${{ matrix.platform.runs_on }}
 
         steps:
             - uses: actions/checkout@6
               with:
-                persist-credential: false
+                  persist-credential: false
+
+            - name: Setup Windows Environment
 
             - name: Install Linux Dependencies
               if: matrix.platform.os == 'linux'
               run: |
-                   sudo apt-get update -qq
-                   sudo apt-get install -y --no-install-recommends \
-                        libwebkit2gtk-4.1-dev \
-                        build-essential \
-                        curl \
-                        wget \
-                        file \
-                        libxdo-dev \
-                        libssl-dev \
-                        libayatana-appindicator3-dev \
-                        librsvg2-dev
+                  sudo apt-get update -qq
+                  sudo apt-get install -y --no-install-recommends \
+                       libwebkit2gtk-4.1-dev \
+                       build-essential \
+                       curl \
+                       wget \
+                       file \
+                       libxdo-dev \
+                       libssl-dev \
+                       libayatana-appindicator3-dev \
+                       librsvg2-dev
             - uses: dtolnay/rust-toolchain@stable
             - uses: swatinem/rust-cache@v2
               with:
-                key: ${{ matrix.platform.os }}
+                  key: ${{ matrix.platform.os }}
             - uses: pnpm/action-setup@v6
               with:
-                version: 9
+                  version: 9
 
             - name: Setup Node.js
               uses: actions/setup-node@v7
               with:
-                node-version: 20
-                cache: 'pnpm'
+                  node-version: 20
+                  cache: "pnpm"
 
             - name: Install JS dependencies
               run: pnpm install --frozen-lockfile
             - name: Test Rust Code
               run: |
-                   cd src-tauri
-                   cargo check
+                  cd src-tauri
+                  cargo check
             - name: Build Tauri App
               run: pnpm tauri build --no-bundle

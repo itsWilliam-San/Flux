@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/release/flux/flux.svg)](https://github.com/itsWilliam-San/Flux/releases/latest)
 
-<img src="/.github/images/plugins.jpg"/>
+<img src="/.github/images/plugins.png"/>
 
 Overview
 ---
