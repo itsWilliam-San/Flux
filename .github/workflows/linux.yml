@@ -15,23 +15,48 @@ env:
 permissions: {  }
 
 jobs:
-    generate-matrix:
-        name: Generate build matrix
+    build:
         runs-on: ubuntu-latest
+        name: Build
         steps:
-            - uses: actions/checkout@v4
-            with:
-                fetch-depth: 0
-                persist-credentials: false
-            - name: Set up uv
+            - uses: actions/checkout@6.1.0
+                with:
+                    persist-credentials: false
+            - name: Install Tauri dependencies
+              run: |
+                   sudo apt-get update -qq
+                   sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev \
+                        build-essential \
+                        curl \
+                        wget \
+                        file \
+                        libxdo-dev \
+                        libssl-dev \
+                        libayatana-appindicator3-dev \
+                        librsvg2-dev
 
+            - uses: dtolnay/rust-toolchain@stable
 
-    crate-build:
-        needs:
-            - generate-matrix
-        runs-on: ${{ matrix.runner }}
-        name: crate / ${{ matrix.arch }}
-        steps:
-            - uses: actions/checkout@v4,
+            - uses: swatinem/rust-cache@v2.9.3
+
+            - uses: pnpm/action-setup@6.1.0
               with:
-                persist-credentials: false
+                version: 9
+
+            - uses: action/setup-node@7
+              with:
+                cache: 'pnpm'
+
+            - name: Install dependencies
+                run: pnpm install --frozen-lockfile
+
+            - name: Type Check (TypeScript)
+              run: pnpm tsc --noEmit
+
+            - name: Test Rust Code
+              run: |
+                   cd src-tauri
+                   cargo check
+
+            - name: Build Tauri App
+              run: pnpm tauri build --no-bundle
