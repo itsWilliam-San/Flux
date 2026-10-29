@@ -223,6 +223,11 @@ mod tests {
     use std::fs;
 
     #[tokio::test]
+    async fn test_bridge_execution() {
+        //
+    }
+
+    #[tokio::test]
     async fn test_python_action_execution() {
         let temp_dir = std::env::temp_dir().join(format!("sewerage_test_{}", std::process::id()));
         let _ = fs::create_dir_all(&temp_dir);
