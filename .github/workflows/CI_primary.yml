@@ -64,6 +64,27 @@ jobs:
               with:
                   node-version: 20
                   cache: "pnpm"
+            - name: Create Python VENV
+              uses: actions/setup-python@v5
+              with:
+                  python-version: "3.14"
+                  cache: "pip"
+
+            - name: Install Python Dependencies (Linux / macOS)
+              if: matrix.platform.os != 'windows'
+              run: |
+                  python -m venv venv
+                  . venv/bin/active
+                  pip install --upgrade pip
+                  pip install openpyxl
+
+            - name: Install Python Dependencies (Windows)
+              if: matrix.platform.os == 'windows'
+              run: |
+                  python -m venv venv
+                  ./venv/Scripts/Activate.ps1
+                  pip install --upgrade pip
+                  pip install openpyxl
 
             - name: Install JS dependencies
               run: pnpm install --frozen-lockfile

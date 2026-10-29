@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
+use tauri::utils::acl::Commands;
 use tauri::Manager;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -74,53 +75,49 @@ if __name__ == "__main__":
 pub struct PythonRuntime;
 
 impl PythonRuntime {
-    /// Attempts to locate the portable Python executable across Linux, Windows, and macOS.
-    /// Checks resource directory, local workspace ./python-runtime, exe directory, then system PATH.
     pub fn resolve_python_executable(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
-        let mut candidate_dirs: Vec<PathBuf> = Vec::new();
+        if cfg!(debug_assertions) {
+            let output = if cfg!(target_os = "windows") {
+                std::process::Command::new("where").arg("python3").output()
+            } else {
+                std::process::Command::new("which").arg("python3").output()
+            };
 
-        // 1. Tauri bundled resource directory
-        if let Some(handle) = app {
-            if let Ok(res_dir) = handle.path().resource_dir() {
-                candidate_dirs.push(res_dir.join("python-runtime"));
-                candidate_dirs.push(res_dir);
+            if let Ok(res) = output {
+                if res.status.success() {
+                    let stdout = String::from_utf8_lossy(&res.stdout);
+                    if let Some(first_line) = stdout.lines().next() {
+                        let path = PathBuf::from(first_line.trim());
+                        return Ok(path);
+                    }
+                }
             }
-        }
+        } else {
+            // 1. Tauri bundled resource directory
+            if let Some(handle) = app {
+                if let Ok(res_dir) = handle.path().resource_dir() {
+                    let dir = res_dir.join("python-runtime");
 
-        // 2. Current working directory / project root
-        if let Ok(cwd) = std::env::current_dir() {
-            if let Some(parent) = cwd.parent() {
-                candidate_dirs.push(parent.join("python-runtime"));
-            }
-        }
-
-        // 3. Executable directory
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(exe_dir) = exe_path.parent() {
-                candidate_dirs.push(exe_dir.join("python-runtime"));
-            }
-        }
-
-        // Check for platform-specific binary locations inside candidates
-        for dir in candidate_dirs {
-            // Linux & macOS paths
-            let unix_bin1 = dir.join("bin").join("python3");
-            let unix_bin2 = dir.join("bin").join("python");
-            if unix_bin1.is_file() {
-                return Ok(unix_bin1);
-            }
-            if unix_bin2.is_file() {
-                return Ok(unix_bin2);
-            }
-
-            // Windows paths
-            let win_bin1 = dir.join("python.exe");
-            let win_bin2 = dir.join("Scripts").join("python.exe");
-            if win_bin1.is_file() {
-                return Ok(win_bin1);
-            }
-            if win_bin2.is_file() {
-                return Ok(win_bin2);
+                    if cfg!(target_os = "windows") {
+                        let win_bin1 = dir.join("python.exe");
+                        let win_bin2 = dir.join("Scripts").join("python.exe");
+                        if win_bin1.is_file() {
+                            return Ok(win_bin1);
+                        }
+                        if win_bin2.is_file() {
+                            return Ok(win_bin2);
+                        }
+                    } else {
+                        let unix_bin1 = dir.join("bin").join("python3");
+                        let unix_bin2 = dir.join("bin").join("python");
+                        if unix_bin1.is_file() {
+                            return Ok(unix_bin1);
+                        }
+                        if unix_bin2.is_file() {
+                            return Ok(unix_bin2);
+                        }
+                    }
+                }
             }
         }
 
@@ -164,11 +161,12 @@ impl PythonRuntime {
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONNOUSERSITE", "1");
 
-        // If running from an isolated portable runtime, set PYTHONHOME if appropriate
-        if let Some(parent) = python_exe.parent() {
-            if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
-                if let Some(root) = parent.parent() {
-                    cmd.env("PYTHONHOME", root.to_string_lossy().to_string());
+        if !cfg!(debug_assertions) {
+            if let Some(parent) = python_exe.parent() {
+                if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
+                    if let Some(root) = parent.parent() {
+                        cmd.env("PYTHONHOME", root.to_string_lossy().to_string());
+                    }
                 }
             }
         }

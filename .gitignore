@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# This is add through a CD pipeline
+python-runtime/*
