@@ -74,7 +74,7 @@ jobs:
               if: matrix.platform.os != 'windows'
               run: |
                   python -m venv venv
-                  . venv/bin/active
+                  . venv/bin/activate
                   pip install --upgrade pip
                   pip install openpyxl
 
