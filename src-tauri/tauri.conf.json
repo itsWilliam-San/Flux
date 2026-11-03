@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "sewerage-system",
+  "productName": "flux",
   "version": "0.1.0",
-  "identifier": "com.williamss.sewerage-system",
+  "identifier": "com.williamss.flux",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",

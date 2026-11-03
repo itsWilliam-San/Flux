@@ -332,7 +332,7 @@ export default function PluginDetails({
                                                                 <SelectTrigger className="w-full h-8 text-xs bg-background text-foreground border-input">
                                                                     <SelectValue />
                                                                 </SelectTrigger>
-                                                                <SelectContent className="bg-popover text-popover-foreground border-border">
+                                                                <SelectContent className="bg-background text-popover-foreground border-border">
                                                                     {param.options.map((opt, idx) => (
                                                                         <SelectItem key={idx} value={String(opt)}>
                                                                             {String(opt)}
