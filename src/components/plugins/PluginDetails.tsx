@@ -6,6 +6,7 @@ import { Avatar, AvatarImage } from "@/components/ui/avatar";
 import { AlertCircle, Lock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import ExecutionResult, { type ExecutionResultData } from "./ExecutionResult";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 
 interface PluginDetailsProps {
     plugin: PluginDescriptor | null;
@@ -325,42 +326,20 @@ export default function PluginDetails({
                                                         ) : param.param_type ===
                                                             "select" &&
                                                             param.options ? (
-                                                            <select
-                                                                value={String(
-                                                                    val ?? "",
-                                                                )}
-                                                                onChange={(
-                                                                    e,
-                                                                ) =>
-                                                                    handleParamChange(
-                                                                        item.id,
-                                                                        param.name,
-                                                                        e.target
-                                                                            .value,
-                                                                    )
-                                                                }
-                                                                className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                                                            >
-                                                                {param.options.map(
-                                                                    (
-                                                                        opt,
-                                                                        idx,
-                                                                    ) => (
-                                                                        <option
-                                                                            key={
-                                                                                idx
-                                                                            }
-                                                                            value={String(
-                                                                                opt,
-                                                                            )}
-                                                                        >
-                                                                            {String(
-                                                                                opt,
-                                                                            )}
-                                                                        </option>
-                                                                    ),
-                                                                )}
-                                                            </select>
+                                                            <Select
+                                                                value={String(val ?? "")}
+                                                                onValueChange={(newValue) => handleParamChange(item.id, param.name, newValue)}>
+                                                                <SelectTrigger className="w-full h-8 text-xs bg-background text-foreground border-input">
+                                                                    <SelectValue />
+                                                                </SelectTrigger>
+                                                                <SelectContent className="bg-popover text-popover-foreground border-border">
+                                                                    {param.options.map((opt, idx) => (
+                                                                        <SelectItem key={idx} value={String(opt)}>
+                                                                            {String(opt)}
+                                                                        </SelectItem>
+                                                                    ))}
+                                                                </SelectContent>
+                                                            </Select>
                                                         ) : (
                                                             <input
                                                                 type="text"
