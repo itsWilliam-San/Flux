@@ -1,0 +1,92 @@
+{
+    "common": {
+        "loading": "Loading...",
+        "update": "Update",
+        "updating": "Updating…",
+        "blocked": "Blocked",
+        "blocked_title": "Blocked: An imported hydraulic system is required",
+        "none": "None",
+        "running": "Running…",
+        "run_action": "Run Action",
+        "back": "Back",
+        "close": "Close",
+        "save": "Save",
+        "parameters": "Parameters",
+        "enabled": "Enabled",
+        "disabled": "Disabled"
+    },
+    "settings": {
+        "title": "Settings",
+        "back_to_plugins": "Back to Plugins",
+        "categories": {
+            "appearance": "Appearance",
+            "language": "Language",
+            "behavior": "Behavior"
+        },
+        "appearance": {
+            "title": "Appearance",
+            "theme_title": "Theme Mode",
+            "theme_desc": "Choose between Dark, Light, or Automatic system theme.",
+            "dark": "Dark",
+            "light": "Light",
+            "auto": "Auto",
+            "decorations_title": "Native Window Decorations",
+            "decorations_desc": "Show operating system native window titlebar and borders.",
+            "enabled": "Enabled",
+            "disabled": "Disabled"
+        },
+        "language": {
+            "title": "Application Language",
+            "desc": "Select your preferred language. Defaults to operating system language.",
+            "select_label": "Language",
+            "pt_br": "Português (Brasil)",
+            "en_us": "English (US)"
+        },
+        "behavior": {
+            "title": "Window Behavior",
+            "close_title": "Close Button (X) Action",
+            "close_desc": "Choose whether clicking X completely terminates the application or minimizes to the tray.",
+            "close_exit": "Close Application (Default)",
+            "close_tray": "Minimize to Tray"
+        }
+    },
+    "placeholders": {
+        "search_plugin": "Search for a plugin..."
+    },
+    "plugin_detail": {
+        "plugin_blocked_title": "Export plugin locked",
+        "plugin_blocked_description": "This plugin requires hydraulic network data stored in the system in order to export. Use an import/extraction plugin to load data first.",
+        "version": "Version",
+        "author": "Author",
+        "origin": "Origin",
+        "category": "Category",
+        "path": "Path",
+        "repository": "Repository",
+        "download": "Download",
+        "exports": "Exports",
+        "no_exports": "This plugin does not declare any exports.",
+        "run_action": "Run Action",
+        "running": "Running…",
+        "blocked": "Blocked",
+        "no_plugin": "No plugins connected. Connect a CAD plugin over TCP or install a local plugin.",
+        "execution_output": "Execution Output",
+        "execution_error": "Execution Error",
+        "show_details": "Show details",
+        "hide_details": "Hide details",
+        "technical_details": "Technical details (JSON-RPC)",
+        "copy_json": "Copy JSON",
+        "copied": "Copied!",
+        "default_success_message": "Execution completed successfully.",
+        "default_error_message": "An error occurred during execution."
+    },
+    "plugin_list": {
+        "extraction": "Extraction",
+        "exporter": "Exporter",
+        "local": "Local",
+        "bridge": "Bridge",
+        "locked": "Locked"
+    },
+    "window": {
+        "loading_plugins": "Searching for local and bridge Plugins..."
+    }
+}

@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import ModalTitleBar from "./components/ModalTitleBar";
+import { listen } from "@tauri-apps/api/event";
 import PluginDetails from "./components/plugins/PluginDetails";
 import PluginList from "./components/plugins/PluginList";
 import type { PluginDescriptor } from "./types/plugins";
 import { Loader2 } from "lucide-react";
+import { useTranslation } from "react-i18next";
 
 interface PluginsWindowProps {
-    onClose: () => void;
+    nativeDecorations?: boolean;
+    onOpenSettings?: () => void;
 }
-
-const HAS_STORED_NETWORK = false;
 
 function matchesSearch(plugin: PluginDescriptor, query: string): boolean {
     const q = query.trim().toLowerCase();
@@ -24,27 +24,57 @@ function matchesSearch(plugin: PluginDescriptor, query: string): boolean {
     );
 }
 
-export default function PluginsWindow({ onClose }: PluginsWindowProps) {
+export default function PluginsWindow({
+    nativeDecorations = false,
+    onOpenSettings,
+}: PluginsWindowProps) {
+    const { t } = useTranslation();
     const [search, setSearch] = useState("");
     const [loading, setLoading] = useState(true);
     const [plugins, setPlugins] = useState<PluginDescriptor[]>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [hasStoredNetwork, setHasStoredNetwork] = useState(false);
+
+    const checkNetworkStatus = useCallback(async () => {
+        try {
+            const hasData = await invoke<boolean>("has_network_data");
+            setHasStoredNetwork(hasData);
+        } catch (error) {
+            console.error("Error while checking network status:", error);
+        }
+    }, []);
 
     const fetchPlugins = useCallback(async () => {
         setLoading(true);
         try {
             const result = await invoke<PluginDescriptor[]>("list_plugins");
             setPlugins(result);
+            await checkNetworkStatus();
         } catch (error) {
             console.error("Error while loading plugins:", error);
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [checkNetworkStatus]);
 
     useEffect(() => {
         fetchPlugins();
     }, [fetchPlugins]);
+
+    useEffect(() => {
+        let unlistenFn: (() => void) | undefined;
+        listen<boolean>("network-data-changed", (event) => {
+            setHasStoredNetwork(Boolean(event.payload));
+        }).then((unlisten) => {
+            unlistenFn = unlisten;
+        });
+
+        return () => {
+            if (unlistenFn) {
+                unlistenFn();
+            }
+        };
+    }, []);
 
     const filtered = useMemo(
         () => plugins.filter((plugin) => matchesSearch(plugin, search)),
@@ -64,12 +94,13 @@ export default function PluginsWindow({ onClose }: PluginsWindowProps) {
         filtered.find((plugin) => plugin.manifest.id === selectedId) ?? null;
 
     return (
-        <div className="fixed inset-0 z-1000 flex h-screen w-screen flex-col bg-background dark:bg-background">
-            <ModalTitleBar onClose={onClose} />
+        <div className="flex flex-1 min-h-0 h-full w-full flex-col bg-background text-foreground">
             {loading ? (
                 <div className="flex min-h-0 flex-1 flex-col justify-center items-center gap-5">
-                    <Loader2 className="h-15 w-15 animate-spin" />
-                    <span>Searching for local and bridge Plugins...</span>
+                    <Loader2 className="size-10 animate-spin text-primary" />
+                    <span className="text-sm text-muted-foreground">
+                        {t("window.loading_plugins")}
+                    </span>
                 </div>
             ) : (
                 <div className="flex min-h-0 flex-1 flex-row">
@@ -78,18 +109,20 @@ export default function PluginsWindow({ onClose }: PluginsWindowProps) {
                         selectedId={selectedId}
                         search={search}
                         loading={loading}
-                        hasStoredNetwork={HAS_STORED_NETWORK}
+                        hasStoredNetwork={hasStoredNetwork}
                         onSearchChange={setSearch}
                         onRefresh={fetchPlugins}
                         onSelect={setSelectedId}
+                        showSettingsButton={nativeDecorations}
+                        onOpenSettings={onOpenSettings}
                     />
                     <PluginDetails
                         plugin={selected}
-                        hasStoredNetwork={HAS_STORED_NETWORK}
+                        hasStoredNetwork={hasStoredNetwork}
+                        onActionSuccess={checkNetworkStatus}
                     />
                 </div>
-            )
-            }
-        </div >
+            )}
+        </div>
     );
 }

@@ -13,25 +13,18 @@
     "windows": [
       {
         "label": "plugins",
-        "title": "Plugins",
+        "title": "Flux",
         "width": 800,
         "height": 600,
         "decorations": false,
         "url": "index.html",
         "visible": true
-      },
-    {
-        "label": "settings",
-        "title": "Settings",
-        "width": 800,
-        "height": 600,
-        "decorations": false,
-        "visible": false
-    }
+      }
     ],
     "security": {
       "csp": null
-    }
+    },
+    "enableGTKAppId": true
   },
   "bundle": {
     "active": true,

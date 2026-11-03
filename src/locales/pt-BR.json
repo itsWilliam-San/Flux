@@ -1,0 +1,92 @@
+{
+    "common": {
+        "loading": "Carregando...",
+        "update": "Atualizar",
+        "updating": "Atualizando…",
+        "blocked": "Bloqueado",
+        "blocked_title": "Bloqueado: Requer dados de rede importados",
+        "none": "Nenhum",
+        "running": "Executando…",
+        "run_action": "Executar Ação",
+        "back": "Voltar",
+        "close": "Fechar",
+        "save": "Salvar",
+        "parameters": "Parâmetros",
+        "enabled": "Ativado",
+        "disabled": "Desativado"
+    },
+    "settings": {
+        "title": "Configurações",
+        "back_to_plugins": "Voltar aos Plugins",
+        "categories": {
+            "appearance": "Aparência",
+            "language": "Idioma",
+            "behavior": "Comportamento"
+        },
+        "appearance": {
+            "title": "Aparência",
+            "theme_title": "Modo de Tema",
+            "theme_desc": "Escolha entre tema Escuro, Claro ou Automático do sistema.",
+            "dark": "Escuro",
+            "light": "Claro",
+            "auto": "Automático",
+            "decorations_title": "Decorações Nativas da Janela",
+            "decorations_desc": "Exibe a barra de título e bordas nativas da janela do sistema operacional.",
+            "enabled": "Ativado",
+            "disabled": "Desativado"
+        },
+        "language": {
+            "title": "Idioma da Aplicação",
+            "desc": "Selecione o idioma de sua preferência. Por padrão, utiliza o idioma do sistema operacional.",
+            "select_label": "Idioma",
+            "pt_br": "Português (Brasil)",
+            "en_us": "English (US)"
+        },
+        "behavior": {
+            "title": "Comportamento da Janela",
+            "close_title": "Ação ao Clicar no Fechar (X)",
+            "close_desc": "Escolha se o botão X encerra completamente a aplicação ou minimiza para a bandeja.",
+            "close_exit": "Fechar Aplicação (Padrão)",
+            "close_tray": "Minimizar para a Bandeja"
+        }
+    },
+    "placeholders": {
+        "search_plugin": "Buscar um plugin..."
+    },
+    "plugin_detail": {
+        "plugin_blocked_title": "Plugin de exportação bloqueado",
+        "plugin_blocked_description": "Este plugin requer dados de rede hidráulica armazenados no sistema para poder exportar. Utilize um plugin de importação/extração para carregar os dados primeiro.",
+        "version": "Versão",
+        "author": "Autor",
+        "origin": "Origem",
+        "category": "Categoria",
+        "path": "Caminho",
+        "repository": "Repositório",
+        "download": "Download",
+        "exports": "Exportações",
+        "no_exports": "Este plugin não declara exportações.",
+        "run_action": "Executar Ação",
+        "running": "Executando…",
+        "blocked": "Bloqueado",
+        "no_plugin": "Nenhum plugin conectado. Conecte um plugin CAD via TCP ou instale um plugin local.",
+        "execution_output": "Saída da Execução",
+        "execution_error": "Erro na Execução",
+        "show_details": "Ver detalhes",
+        "hide_details": "Ocultar detalhes",
+        "technical_details": "Detalhes técnicos (JSON-RPC)",
+        "copy_json": "Copiar JSON",
+        "copied": "Copiado!",
+        "default_success_message": "Execução concluída com sucesso.",
+        "default_error_message": "Ocorreu um erro durante a execução."
+    },
+    "plugin_list": {
+        "extraction": "Extração",
+        "exporter": "Exportação",
+        "local": "Local",
+        "bridge": "Bridge",
+        "locked": "Bloqueado"
+    },
+    "window": {
+        "loading_plugins": "Buscando plugins locais e bridge..."
+    }
+}

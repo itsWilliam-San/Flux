@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use tauri::utils::acl::Commands;
 use tauri::Manager;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -34,7 +33,7 @@ def main():
     if str(plugin_dir) not in sys.path:
         sys.path.insert(0, str(plugin_dir))
 
-    # Read stdin payload
+    # Read stdin JSON-RPC payload
     try:
         raw_in = sys.stdin.read()
         payload = json.loads(raw_in) if raw_in.strip() else {}
@@ -59,12 +58,30 @@ def main():
         sys.stderr.write(f"Function '{func_name}' not found or not callable in {file_name}\n")
         sys.exit(1)
 
+    req_id = payload.get("id") if isinstance(payload, dict) else 1
+
     try:
         result = func(payload)
-        if result is None:
-            result = {"status": "success"}
-        sys.stdout.write(json.dumps(result))
+        # If the plugin returns an envelope that already is JSON-RPC 2.0, keep it.
+        if isinstance(result, dict) and "jsonrpc" in result:
+            response = result
+        else:
+            response = {
+                "jsonrpc": "2.0",
+                "result": result if result is not None else {"status": "success"},
+                "id": req_id
+            }
+        sys.stdout.write(json.dumps(response))
     except Exception as e:
+        error_response = {
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32000,
+                "message": str(e)
+            },
+            "id": req_id
+        }
+        sys.stdout.write(json.dumps(error_response))
         sys.stderr.write(f"Exception during execution of {func_name}: {e}\n")
         sys.exit(1)
 
@@ -202,16 +219,33 @@ impl PythonRuntime {
 
         if stdout.trim().is_empty() {
             return Ok(serde_json::json!({
-                "status": "success",
-                "message": "Action completed with no output"
+                "jsonrpc": "2.0",
+                "result": {
+                    "status": "success",
+                    "message": "Action completed with no output"
+                },
+                "id": payload.get("id").cloned().unwrap_or(serde_json::json!(1))
             }));
         }
 
         match serde_json::from_str::<serde_json::Value>(&stdout) {
-            Ok(json_val) => Ok(json_val),
+            Ok(json_val) => {
+                if let Some(err_obj) = json_val.get("error") {
+                    let msg = err_obj
+                        .get("message")
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("Unknown JSON-RPC error");
+                    return Err(msg.to_string());
+                }
+                Ok(json_val)
+            }
             Err(_) => Ok(serde_json::json!({
-                "status": "success",
-                "output": stdout.trim()
+                "jsonrpc": "2.0",
+                "result": {
+                    "status": "success",
+                    "output": stdout.trim()
+                },
+                "id": payload.get("id").cloned().unwrap_or(serde_json::json!(1))
             })),
         }
     }
@@ -234,7 +268,7 @@ mod tests {
 
         let script_content = r#"
 def run_test(payload):
-    params = payload.get("parameters", {})
+    params = payload.get("params", {}).get("parameters", {}) if "params" in payload else payload.get("parameters", {})
     return {
         "status": "success",
         "greeting": f"Hello {params.get('name', 'World')}"
@@ -243,16 +277,26 @@ def run_test(payload):
         fs::write(temp_dir.join("main.py"), script_content).unwrap();
 
         let payload = serde_json::json!({
-            "action": "main.py:run_test",
-            "parameters": { "name": "Antigravity" }
+            "jsonrpc": "2.0",
+            "method": "main.py:run_test",
+            "params": {
+                "parameters": { "name": "Antigravity" }
+            },
+            "id": 1
         });
 
         let result = PythonRuntime::execute_action(None, &temp_dir, "main.py:run_test", &payload)
             .await
             .expect("Action execution failed");
 
-        assert_eq!(result["status"], "success");
-        assert_eq!(result["greeting"], "Hello Antigravity");
+        let result_obj = if let Some(res) = result.get("result") {
+            res
+        } else {
+            &result
+        };
+
+        assert_eq!(result_obj["status"], "success");
+        assert_eq!(result_obj["greeting"], "Hello Antigravity");
 
         let _ = fs::remove_dir_all(temp_dir);
     }

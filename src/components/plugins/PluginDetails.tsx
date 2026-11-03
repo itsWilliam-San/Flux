@@ -2,46 +2,41 @@ import { useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { Button } from "../ui/button";
 import type { PluginDescriptor, PluginParameter } from "@/types/plugins";
-import { Avatar, AvatarImage } from '@/components/ui/avatar';
+import { Avatar, AvatarImage } from "@/components/ui/avatar";
+import { AlertCircle, Lock } from "lucide-react";
+import { useTranslation } from "react-i18next";
+import ExecutionResult, { type ExecutionResultData } from "./ExecutionResult";
 
 interface PluginDetailsProps {
     plugin: PluginDescriptor | null;
     hasStoredNetwork: boolean;
+    onActionSuccess?: () => void;
 }
-
-const CATEGORY_LABEL: Record<string, string> = {
-    extraction: "Extraction",
-    exporter: "Exporter",
-};
-
-const ORIGIN_LABEL: Record<string, string> = {
-    local: "Local",
-    bridge: "Bridge",
-};
 
 export default function PluginDetails({
     plugin,
     hasStoredNetwork,
+    onActionSuccess,
 }: PluginDetailsProps) {
+    const { t } = useTranslation();
     const [paramValues, setParamValues] = useState<
         Record<string, Record<string, unknown>>
     >({});
     const [runningAction, setRunningAction] = useState<string | null>(null);
     const [actionResults, setActionResults] = useState<
-        Record<string, { success: boolean; data?: unknown; error?: string }>
+        Record<string, ExecutionResultData>
     >({});
 
     if (!plugin) {
         return (
             <section className="flex min-h-0 flex-1 items-center justify-center overflow-y-auto p-6 text-sm text-muted-foreground">
-                No plugins connected. Connect a CAD plugin over TCP or install a
-                local plugin.
+                {t("plugin_detail.no_plugin")}
             </section>
         );
     }
 
     const { manifest, origin, path } = plugin;
-    const isLocal = origin === "local";
+    const canExecute = origin === "local" || origin === "bridge";
     const exporterLocked = manifest.category === "exporter" && !hasStoredNetwork;
 
     const handleParamChange = (
@@ -70,6 +65,10 @@ export default function PluginDetails({
     };
 
     const handleExecuteAction = async (exportId: string) => {
+        if (exporterLocked) {
+            return;
+        }
+
         setRunningAction(exportId);
         setActionResults((prev) => {
             const next = { ...prev };
@@ -100,6 +99,10 @@ export default function PluginDetails({
                     data: response,
                 },
             }));
+
+            if (onActionSuccess) {
+                onActionSuccess();
+            }
         } catch (err) {
             setActionResults((prev) => ({
                 ...prev,
@@ -118,7 +121,13 @@ export default function PluginDetails({
             <div className="flex items-start gap-4">
                 {manifest.icon ? (
                     <Avatar className="size-12">
-                        <AvatarImage src={manifest.icon.startsWith("data:") ? manifest.icon : `data:image/png;base64,${manifest.icon}`} />
+                        <AvatarImage
+                            src={
+                                manifest.icon.startsWith("data:")
+                                    ? manifest.icon
+                                    : `data:image/png;base64,${manifest.icon}`
+                            }
+                        />
                     </Avatar>
                 ) : null}
                 <div className="min-w-0">
@@ -132,21 +141,49 @@ export default function PluginDetails({
             </div>
 
             {exporterLocked ? (
-                <p className="mt-4 rounded-md border border-border bg-muted/50 px-3 py-2 text-sm text-muted-foreground">
-                    Notice: Export plugins usually operate on extracted network data.
-                </p>
+                <div className="mt-4 flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-500">
+                    <AlertCircle className="size-5 shrink-0 mt-0.5" />
+                    <div>
+                        <p className="font-medium">
+                            {t("plugin_detail.plugin_blocked_title")}
+                        </p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                            {t("plugin_detail.plugin_blocked_description")}
+                        </p>
+                    </div>
+                </div>
             ) : null}
 
             <dl className="mt-6 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-                <dt className="text-muted-foreground">Version</dt>
+                <dt className="text-muted-foreground">
+                    {t("plugin_detail.version")}
+                </dt>
                 <dd>{manifest.version}</dd>
-                <dt className="text-muted-foreground">Author</dt>
+                <dt className="text-muted-foreground">
+                    {t("plugin_detail.author")}
+                </dt>
                 <dd>{manifest.author}</dd>
-                <dt className="text-muted-foreground">Category</dt>
-                <dd>{CATEGORY_LABEL[manifest.category] ?? manifest.category}</dd>
+                <dt className="text-muted-foreground">
+                    {t("plugin_detail.origin")}
+                </dt>
+                <dd>
+                    {origin === "local"
+                        ? t("plugin_list.local")
+                        : t("plugin_list.bridge")}
+                </dd>
+                <dt className="text-muted-foreground">
+                    {t("plugin_detail.category")}
+                </dt>
+                <dd>
+                    {manifest.category === "exporter"
+                        ? t("plugin_list.exporter")
+                        : t("plugin_list.extraction")}
+                </dd>
                 {path ? (
                     <>
-                        <dt className="text-muted-foreground">Path</dt>
+                        <dt className="text-muted-foreground">
+                            {t("plugin_detail.path")}
+                        </dt>
                         <dd className="font-mono text-xs truncate" title={path}>
                             {path}
                         </dd>
@@ -154,24 +191,28 @@ export default function PluginDetails({
                 ) : null}
                 {manifest.repository ? (
                     <>
-                        <dt className="text-muted-foreground">Repository</dt>
+                        <dt className="text-muted-foreground">
+                            {t("plugin_detail.repository")}
+                        </dt>
                         <dd className="truncate">{manifest.repository}</dd>
                     </>
                 ) : null}
                 {manifest.download_url ? (
                     <>
-                        <dt className="text-muted-foreground">Download</dt>
+                        <dt className="text-muted-foreground">
+                            {t("plugin_detail.download")}
+                        </dt>
                         <dd className="truncate">{manifest.download_url}</dd>
                     </>
                 ) : null}
             </dl>
 
             <h2 className="mt-8 text-sm font-semibold uppercase tracking-wide text-foreground">
-                Exports
+                {t("plugin_detail.exports")}
             </h2>
             {manifest.exports.length === 0 ? (
                 <p className="mt-2 text-sm text-muted-foreground">
-                    This plugin does not declare any exports.
+                    {t("plugin_detail.no_exports")}
                 </p>
             ) : (
                 <ul className="mt-3 flex flex-col gap-4">
@@ -196,18 +237,33 @@ export default function PluginDetails({
                                             {item.entrypoint}
                                         </p>
                                     </div>
-                                    {isLocal ? (
+                                    {canExecute ? (
                                         <Button
                                             type="button"
                                             size="sm"
                                             onClick={() =>
                                                 handleExecuteAction(item.id)
                                             }
-                                            disabled={isExecuting}
+                                            disabled={
+                                                isExecuting || exporterLocked
+                                            }
+                                            title={
+                                                exporterLocked
+                                                    ? t("common.blocked_title")
+                                                    : undefined
+                                            }
+                                            className="cursor-pointer"
                                         >
-                                            {isExecuting
-                                                ? "Running…"
-                                                : "Run Action"}
+                                            {isExecuting ? (
+                                                t("common.running")
+                                            ) : exporterLocked ? (
+                                                <span className="flex items-center gap-1.5">
+                                                    <Lock className="size-3.5" />
+                                                    {t("common.blocked")}
+                                                </span>
+                                            ) : (
+                                                t("plugin_detail.run_action")
+                                            )}
                                         </Button>
                                     ) : null}
                                 </div>
@@ -216,7 +272,7 @@ export default function PluginDetails({
                                     item.parameters.length > 0 ? (
                                     <div className="mt-3 border-t border-border pt-3">
                                         <p className="text-xs font-semibold uppercase text-muted-foreground mb-2">
-                                            Parameters
+                                            {t("common.parameters")}
                                         </p>
                                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                             {item.parameters.map((param) => {
@@ -238,11 +294,9 @@ export default function PluginDetails({
                                                             <div className="flex items-center gap-2 mt-1">
                                                                 <input
                                                                     type="checkbox"
-                                                                    checked={
-                                                                        Boolean(
-                                                                            val,
-                                                                        )
-                                                                    }
+                                                                    checked={Boolean(
+                                                                        val,
+                                                                    )}
                                                                     onChange={(
                                                                         e,
                                                                     ) =>
@@ -260,8 +314,12 @@ export default function PluginDetails({
                                                                     {Boolean(
                                                                         val,
                                                                     )
-                                                                        ? "Enabled"
-                                                                        : "Disabled"}
+                                                                        ? t(
+                                                                            "common.enabled",
+                                                                        )
+                                                                        : t(
+                                                                            "common.disabled",
+                                                                        )}
                                                                 </span>
                                                             </div>
                                                         ) : param.param_type ===
@@ -330,24 +388,7 @@ export default function PluginDetails({
                                 ) : null}
 
                                 {result ? (
-                                    <div className="mt-3 border-t border-border pt-3">
-                                        <p
-                                            className={`text-xs font-semibold ${result.success ? "text-green-500" : "text-destructive"}`}
-                                        >
-                                            {result.success
-                                                ? "Execution Output:"
-                                                : "Execution Error:"}
-                                        </p>
-                                        <pre className="mt-1 max-h-48 overflow-y-auto rounded bg-muted p-2 font-mono text-xs text-foreground whitespace-pre-wrap">
-                                            {result.success
-                                                ? JSON.stringify(
-                                                    result.data,
-                                                    null,
-                                                    2,
-                                                )
-                                                : result.error}
-                                        </pre>
-                                    </div>
+                                    <ExecutionResult result={result} />
                                 ) : null}
                             </li>
                         );

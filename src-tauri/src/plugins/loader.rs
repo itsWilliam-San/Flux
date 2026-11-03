@@ -131,23 +131,22 @@ pub fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 pub fn discover_local_plugins(app: &tauri::AppHandle) -> Vec<PluginDescriptor> {
     let mut map: HashMap<String, PluginDescriptor> = HashMap::new();
 
-    // 1. Workspace / current directory ./plugins (highest priority during dev)
-    if let Ok(cwd) = std::env::current_dir() {
-        let local_plugins_dir = if cfg!(debug_assertions) {
-            cwd.join("../plugins")
-        } else {
-            cwd.join("plugins")
-        };
+    if cfg!(debug_assertions) {
+        if let Ok(cwd) = std::env::current_dir() {
+            if let Some(cwd_p) = cwd.parent() {
+                let local_plugins_dir = cwd_p.join("plugins");
 
-        for plugin in scan_directory_for_plugins(&local_plugins_dir) {
-            map.insert(plugin.manifest.id.clone(), plugin);
+                for plugin in scan_directory_for_plugins(&local_plugins_dir) {
+                    map.insert(plugin.manifest.id.clone(), plugin);
+                }
+            }
         }
-    }
-
-    // 2. User app data directory plugins
-    if let Ok(user_dir) = get_user_plugins_dir(app) {
-        for plugin in scan_directory_for_plugins(&user_dir) {
-            map.entry(plugin.manifest.id.clone()).or_insert(plugin);
+    } else {
+        // 2. User app data directory plugins
+        if let Ok(user_dir) = get_user_plugins_dir(app) {
+            for plugin in scan_directory_for_plugins(&user_dir) {
+                map.entry(plugin.manifest.id.clone()).or_insert(plugin);
+            }
         }
     }
 
