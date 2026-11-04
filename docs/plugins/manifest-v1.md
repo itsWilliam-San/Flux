@@ -51,3 +51,7 @@ Communication between the backend and the plugin follows a unified format for bo
 
 - **`action`** (`string`): Path and method of the action (Is the same from `entrypoint`)
 - **`parameters`** (`array` of objects, optional): The same array of objects from the `parameters` of the specified `entrypoint`.
+
+## Exportation Plugins
+Para plugins de exportação que precisam dos dados da rede, os valores ficaram dentro do `network` dentro do `params`.
+

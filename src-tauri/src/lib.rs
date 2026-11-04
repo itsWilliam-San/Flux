@@ -27,27 +27,15 @@ const READ_BYTES_SOCKET: usize = 4096;
 mod network;
 mod plugins;
 
-fn extract_system_from_value(val: &serde_json::Value) -> Option<network::System> {
-    // 1. Direct match: val is the System itself
-    if let Ok(sys) = serde_json::from_value::<network::System>(val.clone()) {
-        if !sys.primaries.is_empty() || !sys.intermediates.is_empty() || !sys.segments.is_empty() {
-            return Some(sys);
-        }
+fn extract_system_from_value(val: &serde_json::Value) -> Result<network::System, String> {
+    if let Some(inner) = val.get("system") {
+        let sys =
+            serde_json::from_value::<network::System>(inner.clone()).map_err(|e| e.to_string())?;
+
+        return Ok(sys);
     }
-    // 2. Nested under "system", "network", or "data"
-    for key in &["system", "network", "data"] {
-        if let Some(inner) = val.get(*key) {
-            if let Ok(sys) = serde_json::from_value::<network::System>(inner.clone()) {
-                if !sys.primaries.is_empty()
-                    || !sys.intermediates.is_empty()
-                    || !sys.segments.is_empty()
-                {
-                    return Some(sys);
-                }
-            }
-        }
-    }
-    None
+
+    return Err("No field \"system\" found inside the received response".into());
 }
 
 #[tauri::command]
@@ -81,7 +69,6 @@ async fn execute_plugin_action(
     action: String,
     parameters: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, String> {
-    // 1. Check if this is a bridge plugin
     let is_bridge = {
         let sockets = state.sockets.lock().await;
         sockets.contains_key(&plugin_id)
@@ -94,16 +81,7 @@ async fn execute_plugin_action(
             .ok_or_else(|| format!("Bridge plugin '{}' disconnected", plugin_id))?;
 
         let is_exporter = matches!(manifest.category, plugins::PluginCategory::Exporter);
-        let is_extraction = matches!(
-            manifest.category,
-            plugins::PluginCategory::Extraction
-        ) || match &manifest.category {
-            plugins::PluginCategory::Custom(c) => {
-                let lower = c.to_lowercase();
-                lower == "import" || lower == "importer" || lower == "extraction"
-            }
-            _ => false,
-        };
+        let is_extraction = matches!(manifest.category, plugins::PluginCategory::Extraction);
 
         if is_exporter {
             let net = state.network.lock().await;
@@ -121,6 +99,7 @@ async fn execute_plugin_action(
             .find(|e| e.id == action || e.entrypoint == action)
             .ok_or_else(|| format!("Action '{}' not found in plugin exports", action))?;
 
+        // Vou provavelmente remover isso pois me parece uma camada a mais desencessária.
         let mut params_map = serde_json::Map::new();
         params_map.insert(
             "parameters".to_string(),
@@ -131,8 +110,7 @@ async fn execute_plugin_action(
             let net = state.network.lock().await;
             if let Some(ref system) = *net {
                 if let Ok(net_val) = serde_json::to_value(system) {
-                    params_map.insert("network".to_string(), net_val.clone());
-                    params_map.insert("system".to_string(), net_val);
+                    params_map.insert("network".to_string(), net_val);
                 }
             }
         }
@@ -182,12 +160,11 @@ async fn execute_plugin_action(
             .cloned()
             .unwrap_or_else(|| raw_response.clone());
 
-        if is_extraction || extract_system_from_value(&result_value).is_some() {
-            if let Some(system) = extract_system_from_value(&result_value) {
-                let mut net_guard = state.network.lock().await;
-                *net_guard = Some(system);
-                let _ = app.emit("network-data-changed", true);
-            }
+        if is_extraction {
+            let system = extract_system_from_value(&result_value)?;
+            let mut net_guard = state.network.lock().await;
+            *net_guard = Some(system);
+            let _ = app.emit("network-data-changed", true);
         }
 
         return Ok(result_value);
@@ -204,13 +181,7 @@ async fn execute_plugin_action(
     let is_extraction = matches!(
         target.manifest.category,
         plugins::PluginCategory::Extraction
-    ) || match &target.manifest.category {
-        plugins::PluginCategory::Custom(c) => {
-            let lower = c.to_lowercase();
-            lower == "import" || lower == "importer" || lower == "extraction"
-        }
-        _ => false,
-    };
+    );
 
     // If it's an export plugin, block execution if no network data is stored
     if is_exporter {
@@ -248,8 +219,7 @@ async fn execute_plugin_action(
         let net = state.network.lock().await;
         if let Some(ref system) = *net {
             if let Ok(net_val) = serde_json::to_value(system) {
-                params_map.insert("network".to_string(), net_val.clone());
-                params_map.insert("system".to_string(), net_val);
+                params_map.insert("network".to_string(), net_val);
             }
         }
     }
@@ -275,12 +245,11 @@ async fn execute_plugin_action(
         .unwrap_or_else(|| raw_response.clone());
 
     // If extraction/import plugin, save returned network into AppData
-    if is_extraction || extract_system_from_value(&result_value).is_some() {
-        if let Some(system) = extract_system_from_value(&result_value) {
-            let mut net_guard = state.network.lock().await;
-            *net_guard = Some(system);
-            let _ = app.emit("network-data-changed", true);
-        }
+    if is_extraction {
+        let system = extract_system_from_value(&result_value)?;
+        let mut net_guard = state.network.lock().await;
+        *net_guard = Some(system);
+        let _ = app.emit("network-data-changed", true);
     }
 
     Ok(result_value)
@@ -441,7 +410,6 @@ fn open_socket(
                     return;
                 }
             };
-            println!("Server running on {}", ADDRESS);
 
             loop {
                 let (mut socket, addr) = match listener.accept().await {
@@ -450,7 +418,6 @@ fn open_socket(
                 };
 
                 if let Ok(manifest) = handshake(&mut socket).await {
-                    println!("Client connected: {}", addr);
                     let mut guard = local_sockets.lock().await;
                     guard.insert(manifest.id.clone(), (socket, manifest));
                 } else {
@@ -485,7 +452,7 @@ mod integration_tests {
 
         // 1. Direct
         let sys1 = extract_system_from_value(&sample_system_json);
-        assert!(sys1.is_some());
+        assert!(sys1.is_ok());
         assert_eq!(sys1.unwrap().primaries[0].id.0, "PV-01");
 
         // 2. Wrapped in "system"
@@ -494,7 +461,7 @@ mod integration_tests {
             "system": sample_system_json
         });
         let sys2 = extract_system_from_value(&wrapped_sys);
-        assert!(sys2.is_some());
+        assert!(sys2.is_ok());
         assert_eq!(sys2.unwrap().primaries[0].id.0, "PV-01");
 
         // 3. Wrapped in "network"
@@ -503,7 +470,7 @@ mod integration_tests {
             "network": sample_system_json
         });
         let sys3 = extract_system_from_value(&wrapped_net);
-        assert!(sys3.is_some());
+        assert!(sys3.is_ok());
         assert_eq!(sys3.unwrap().primaries[0].id.0, "PV-01");
     }
 

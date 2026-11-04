@@ -1,48 +1,19 @@
 {
-    "name": "Excel Exporter",
-    "description": "SANCAD to Excel. XLSV and CSV support",
+    "name": "Sancad2Sanepar",
+    "description": "Exporta dados vindo do Sancad (Com dados da planta de RN) para XLSV com base em um template. Aviso: Esse Software não é um produto oficial, não possui qualquer vínculo comercial, técnico ou de patrocínio com a Companhia de Saneamento do Paraná (Sanepar), leia o arquivo de Disclamer que acompanha esse plugin.",
     "version": "1.0.0",
     "author": "William",
     "repository": "",
     "download_url": "",
     "icon": "",
-    "id": "com.william.excel-exporter",
+    "id": "com.william.Sancad2Sanepar",
     "category": "exporter",
     "exports": [
         {
-            "id": "export_csv_detalhado",
-            "label": "Exportar Relatório (CSV)",
-            "description": "Gera um CSV completo com filtros avançados",
-            "entrypoint": "main.py:run_detailed_export",
-            "parameters": [
-                {
-                    "name": "separator",
-                    "param_type": "select",
-                    "label": "Separador",
-                    "options": [",", ";", "\t"],
-                    "default": ";"
-                },
-                {
-                    "name": "include_headers",
-                    "param_type": "boolean",
-                    "label": "Incluir cabeçalho?",
-                    "default": true
-                }
-            ]
-        },
-        {
-            "id": "export_xlsv_detalhado",
+            "id": "export_xlsv",
             "label": "Exportar Relatório (XLSV)",
-            "description": "Gera um XLSV completo com filtros avançados",
-            "entrypoint": "main.py:run_export_csv",
-            "parameters": [
-                {
-                    "name": "sheet_name",
-                    "param_type": "string",
-                    "label": "Nome da Planilha",
-                    "default": "Relatorio"
-                }
-            ]
+            "description": "Gera um XLSV com Base em um Template",
+            "entrypoint": "main.py:run_export_xlsv"
         }
     ]
 }

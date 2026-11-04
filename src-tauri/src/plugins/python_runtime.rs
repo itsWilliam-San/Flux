@@ -208,6 +208,8 @@ impl PythonRuntime {
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
+        println!("{}", stdout);
+
         if !output.status.success() {
             return Err(format!(
                 "Python script execution failed with exit code {:?}.\nStderr:\n{}\nStdout:\n{}",
@@ -255,11 +257,6 @@ impl PythonRuntime {
 mod tests {
     use super::*;
     use std::fs;
-
-    #[tokio::test]
-    async fn test_bridge_execution() {
-        //
-    }
 
     #[tokio::test]
     async fn test_python_action_execution() {

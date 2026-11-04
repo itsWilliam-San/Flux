@@ -4,51 +4,108 @@ import os
 SAMPLE_NETWORK = {
     "Intermediates": [
         {
-            "ID": "L-01",
-            "TerrainLevel": 100.00,
-            "InvertLevel": 50.00,
-            "Depth": 50.00
+            "ID": "1-1E1",
+            "TerrainLevel": 851.439,
+            "InvertLevel": 850.335,
+            "Depth": 1.104
+        },
+        {
+            "ID": "1-1E2",
+            "TerrainLevel": 850.984,
+            "InvertLevel": 849.934,
+            "Depth": 1.050
+        },
+        {
+            "ID": "1-1E3",
+            "TerrainLevel": 850.651,
+            "InvertLevel": 849.533,
+            "Depth": 1.118
+        },
+        {
+            "ID": "1-1E4",
+            "TerrainLevel": 850.246,
+            "InvertLevel": 849.132,
+            "Depth": 1.114
+        },
+        {
+            "ID": "1-2E1",
+            "TerrainLevel": 849.789,
+            "InvertLevel": 848.396,
+            "Depth": 1.393
+        },
+        {
+            "ID": "1-2E2",
+            "TerrainLevel": 848.955,
+            "InvertLevel": 847.905,
+            "Depth": 1.050
         }
     ],
     "Segments": [
         {
-            "ID": "SEG-ABC",
+            "ID": "1-1",
             "Connection": {
-                "kind": "DropPipe",
-                "InvertLevel": 10.00
+                "kind": "DG",
+                "InvertLevel": 849.112
             },
             "Pipe": {
                 "Material": "PVC",
-                "Length": 10.00,
-                "Slope": 0.56,
-                "Diameter": 0.05
+                "Length": 81,
+                "Slope": 0.02005,
+                "Diameter": 150
             },
-            "Intermediates": ["L-01"],
-            "IntermediateDistance": 20.00
+            "Intermediates": ["1-1E1", "1-1E2", "1-1E3", "1-1E4"],
+            "IntermediateDistance": 20
+        },
+        {
+            "ID": "1-2",
+            "Pipe": {
+                "Material": "PVC",
+                "Length": 60,
+                "Slope": 0.02458,
+                "Diameter": 150
+            },
+            "Intermediates": ["1-2E1", "1-2E2"],
+            "IntermediateDistance": 20
         }
     ],
     "Primary": [
         {
-            "ID": "PV-01",
-            "TerrainLevel": 100.00,
-            "InvertLevel": 50.00,
-            "Depth": 50.00,
-            "UpstreamManholes": ["PV-02"],
-            "DownstreamConnection": ["PV-03", "SEG-ABC"],
+            "ID": "SB1-001",
+            "TerrainLevel": 851.862,
+            "InvertLevel": 850.736,
+            "Depth": 1.126,
+            "UpstreamManholes": [],
+            "DownstreamConnection": ["SB1-002", "1-1"],
             "psets": {
                 "Topo": {
-                    "RN": "11"
+                    "RN": ""
                 }
             }
         },
         {
-            "ID": "PV-02",
-            "TerrainLevel": 102.50,
-            "InvertLevel": 52.10,
-            "Depth": 50.40,
-            "UpstreamManholes": [],
-            "DownstreamConnection": ["PV-01", "SEG-ABC"],
-            "psets": {}
+            "ID": "SB1-002",
+            "TerrainLevel": 850.238,
+            "InvertLevel": 848.888,
+            "Depth": 1.350,
+            "UpstreamManholes": ["SB1-001"],
+            "DownstreamConnection": ["SB1-003", "1-2"],
+            "psets": {
+                "Topo": {
+                    "RN": ""
+                }
+            }
+        },
+        {
+            "ID": "SB1-003",
+            "TerrainLevel": 848.687,
+            "InvertLevel": 847.413,
+            "Depth": 1.274,
+            "UpstreamManholes": ["SB1-002"],
+            "psets": {
+                "Topo": {
+                    "RN": ""
+                }
+            }
         }
     ]
 }

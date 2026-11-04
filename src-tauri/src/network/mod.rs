@@ -58,21 +58,21 @@ pub enum AnyStationId {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Connection {
-    #[serde(alias = "kind")]
+    #[serde(rename = "kind")]
     pub connection_type: String,
-    #[serde(alias = "InvertLevel")]
+    #[serde(rename = "InvertLevel")]
     pub invert_level: Length,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Intermediate {
-    #[serde(alias = "ID")]
+    #[serde(rename = "ID")]
     pub id: IntermediateId,
-    #[serde(alias = "TerrainLevel")]
+    #[serde(rename = "TerrainLevel")]
     pub terrain_level: Length,
-    #[serde(alias = "InvertLevel")]
+    #[serde(rename = "InvertLevel")]
     pub invert_level: Length,
-    #[serde(alias = "Depth")]
+    #[serde(rename = "Depth")]
     pub depth: Length,
 }
 
@@ -96,17 +96,17 @@ impl Station for Intermediate {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Primary {
-    #[serde(alias = "ID")]
+    #[serde(rename = "ID")]
     pub id: PrimaryId,
-    #[serde(alias = "TerrainLevel")]
+    #[serde(rename = "TerrainLevel")]
     pub terrain_level: Length,
-    #[serde(alias = "InvertLevel")]
+    #[serde(rename = "InvertLevel")]
     pub invert_level: Length,
-    #[serde(alias = "Depth")]
+    #[serde(rename = "Depth")]
     pub depth: Length,
-    #[serde(alias = "UpstreamManholes", default)]
+    #[serde(rename = "UpstreamManholes", default)]
     pub upstream_manholes: Vec<PrimaryId>,
-    #[serde(alias = "DownstreamConnection")]
+    #[serde(rename = "DownstreamConnection")]
     pub downstream_manhole: Option<(PrimaryId, SegmentId)>,
     #[serde(default)]
     pub psets: PropertySetBag,
@@ -132,27 +132,27 @@ impl Station for Primary {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Pipe {
-    #[serde(alias = "Material")]
+    #[serde(rename = "Material")]
     pub material: String,
-    #[serde(alias = "Length")]
+    #[serde(rename = "Length")]
     pub length: Length,
-    #[serde(alias = "Slope")]
+    #[serde(rename = "Slope")]
     pub slope: Ratio,
-    #[serde(alias = "Diameter")]
+    #[serde(rename = "Diameter")]
     pub diameter: Length,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct Segment {
-    #[serde(alias = "ID")]
+    #[serde(rename = "ID")]
     pub id: SegmentId,
-    #[serde(alias = "Connection")]
+    #[serde(rename = "Connection")]
     pub connection: Option<Connection>,
-    #[serde(alias = "Pipe")]
+    #[serde(rename = "Pipe")]
     pub pipe: Pipe,
-    #[serde(alias = "Intermediates", default)]
+    #[serde(rename = "Intermediates", default)]
     pub intermediates: Vec<IntermediateId>,
-    #[serde(alias = "IntermediateDistance")]
+    #[serde(rename = "IntermediateDistance")]
     pub intermediate_distance: Length,
 }
 
@@ -165,11 +165,11 @@ pub trait Station {
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct System {
-    #[serde(alias = "Primary", alias = "primaries", default)]
+    #[serde(rename = "Primary")]
     pub primaries: Vec<Primary>,
-    #[serde(alias = "Intermediates", alias = "intermediates", default)]
+    #[serde(rename = "Intermediates", default)]
     pub intermediates: Vec<Intermediate>,
-    #[serde(alias = "Segments", alias = "segments", default)]
+    #[serde(rename = "Segments")]
     pub segments: Vec<Segment>,
 }
 
@@ -181,48 +181,115 @@ mod tests {
 
     #[test]
     fn test_deserialize_contract_json() {
-        let json_data = r#"{
-            "Intermediates": [
-                {
-                    "ID": "L-01",
-                    "TerrainLevel": 100.00,
-                    "InvertLevel": 50.00,
-                    "Depth": 50.0
+        let json_data = r#"'
+{
+    "Intermediates": [
+        {
+            "ID": "1-1E1",
+            "Terrainlevel": 851.439,
+            "InvertLevel": 850.335,
+            "Depth": 1.104
+        },
+        {
+            "ID": "1-1E2",
+            "Terrainlevel": 850.984,
+            "InvertLevel": 849.934,
+            "Depth": 1.050
+        },
+        {
+            "ID": "1-1E3",
+            "Terrainlevel": 850.651,
+            "InvertLevel": 849.533,
+            "Depth": 1.118
+        },
+        {
+            "ID": "1-1E4",
+            "Terrainlevel": 850.246,
+            "InvertLevel": 849.132,
+            "Depth": 1.114
+        },
+        {
+            "ID": "1-2E1",
+            "Terrainlevel": 849.789,
+            "InvertLevel": 848.396,
+            "Depth": 1.393
+        },
+        {
+            "ID": "1-2E2",
+            "Terrainlevel": 848.955,
+            "InvertLevel": 847.905,
+            "Depth": 1.050
+        }
+    ],
+    "Segments": [
+        {
+            "ID": "1-1",
+            "Connection": {
+                "kind": "DG",
+                "InvertLevel": 849.112
+            },
+            "Pipe": {
+                "Material": "PVC",
+                "Length": 81,
+                "Slope": 0.02005,
+                "Diameter": 150
+            },
+            "Intermediates": ["1-1E1", "1-1E2", "1-1E3", "1-1E4"],
+            "IntermediateDistance": 20
+        },
+        {
+            "ID": "1-2",
+            "Pipe": {
+                "Material": "PVC",
+                "Length": 60,
+                "Slope": 0.02458,
+                "Diameter": 150
+            },
+            "Intermediates": ["1-2E1", "1-2E2"],
+            "IntermediateDistance": 20
+        }
+    ],
+    "Primary": [
+        {
+            "ID": "SB1-001",
+            "TerrainLevel": 851.862,
+            "InvertLevel": 850.736,
+            "Depth": 1.126,
+            "UpstreamManholes": [],
+            "DownstreamConnection": ["SB1-002", "1-1"],
+            "psets": {
+                "Topo": {
+                    "RN": ""
                 }
-            ],
-            "Segments": [
-                {
-                    "ID": "SEG-ABC",
-                    "Connection": {
-                        "kind": "DropPipe",
-                        "InvertLevel": 10.0
-                    },
-                    "Pipe": {
-                        "Material": "PVC",
-                        "Length": 10.0,
-                        "Slope": 0.56,
-                        "Diameter": 0.05
-                    },
-                    "Intermediates": ["L-01"],
-                    "IntermediateDistance": 20.0
+            }
+        },
+        {
+            "ID": "SB1-002",
+            "TerrainLevel": 850.238,
+            "InvertLevel": 848.888,
+            "Depth": 1.350,
+            "UpstreamManholes": ["SB1-001"],
+            "DownstreamConnection": ["SB1-003", "1-2"],
+            "psets": {
+                "Topo": {
+                    "RN": ""
                 }
-            ],
-            "Primary": [
-                {
-                    "ID": "PV-01",
-                    "TerrainLevel": 100.00,
-                    "InvertLevel": 50.00,
-                    "Depth": 50.0,
-                    "UpstreamManholes": ["PV-02"],
-                    "DownstreamConnection": ["PV-03", "SEG-ABC"],
-                    "psets": {
-                        "Topo": {
-                            "RN": "11"
-                        }
-                    }
+            }
+        },
+        {
+            "ID": "SB1-003",
+            "TerrainLevel": 848.687,
+            "InvertLevel": 847.413,
+            "Depth": 1.274,
+            "UpstreamManholes": ["SB1-002"],
+            "psets": {
+                "Topo": {
+                    "RN": ""
                 }
-            ]
-        }"#;
+            }
+        }
+    ]
+}"#;
 
         let system: System = serde_json::from_str(json_data).expect("Failed to deserialize System");
 
