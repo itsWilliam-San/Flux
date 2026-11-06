@@ -110,7 +110,7 @@ jobs:
                   else
                       echo "Configurando Python Standalone para Linux..."
                       curl -L https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.14.9+20261021-x86_64-unknown-linux-gnu-install_only.tar.gz -o python.tar.gz
-                      tar -xzf python.tar.gz -C src-tauri/resources/python-runtime --strip-components=1
+                      tar -xzf python.tar.gz -C python-runtime/ --strip-components=1
                       rm python.tar.gz
 
                       # O Python Standalone do Linux geralmente já vem com ensurepip ou pip integrado.
@@ -123,7 +123,7 @@ jobs:
             - name: Fix Windows Python Embeddable Path
               if: matrix.platform.os == 'windows'
               run: |
-                  $pthFile = "src-tauri/resources/python-runtime/python314._pth"
+                  $pthFile = "python-runtime/python314._pth"
                   # Descomenta 'import site' para que o Python embeddable enxergue as pastas de pacotes instalados (site-packages)
                   (Get-Content $pthFile) -replace '#import site', 'import site' | Set-Content $pthFile
               shell: powershell
