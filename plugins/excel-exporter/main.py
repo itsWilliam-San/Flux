@@ -40,12 +40,12 @@ class Segment(BaseModel):
     IntermediateDistance: Optional[float] = None
 
 class System(BaseModel):
-    Primary: list[Primary]
-    Intermediates: Optional[list[Intermediate]] = None
+    primary: list[Primary] = Field(..., alias="Primary")
+    Intermediates: Optional[list[Intermediate]] = Field(default=None, alias="Intermediates")
     Segments: list[Segment]
 
 
-# --- CONFIGURAÇÕES DE EXPORTAÇÃO ---
+# --- configurações DE EXPORTAÇÃO ---
 TEMPLATE_PATH: str = "./template.xlsx"
 OUTPUT_DIR: str = "./output/"
 FIRST_ROW: int = 15
@@ -66,13 +66,9 @@ def _load_and_validate_system(network: dict) -> tuple[System, dict[str, Primary]
     if not os.path.exists(TEMPLATE_PATH):
         raise FileNotFoundError(f"Arquivo de template não encontrado em: {TEMPLATE_PATH}")
 
-    print(network)
     system_data: System = System(**network)
-    print(system_data)
-    sys.exit(1)
-    primary_dict: dict[str, Primary] = {p.ID: p for p in system_data.Primary}
+    primary_dict: dict[str, Primary] = {p.ID: p for p in system_data.primary}
     inter_dict: dict[str, Intermediate] = {i.ID: i for i in (system_data.Intermediates or [])}
-
     return system_data, primary_dict, inter_dict
 
 
@@ -174,7 +170,7 @@ def _process_segment(
     seg_id = segment.ID
     upstream_pv, downstream_pv = _find_segment_nodes(segment, primaries, primary_dict)
 
-    inter_ids = segment.Intermediate or []
+    inter_ids = segment.Intermediates or []
     inter_dist = segment.IntermediateDistance
     pipe = segment.pipe
     slope = pipe.Slope
@@ -270,7 +266,7 @@ def export_network_to_xlsx(network: dict, output_filename: str = "relatorio_rede
         for segment in system_data.Segments:
             _process_segment(
                 segment=segment,
-                primaries=system_data.Primary,
+                primaries=system_data.primary,
                 primary_dict=primary_dict,
                 inter_dict=inter_dict,
                 template_ws=template_ws,

@@ -13,7 +13,14 @@
             "id": "export_xlsv",
             "label": "Exportar Relatório (XLSV)",
             "description": "Gera um XLSV com Base em um Template",
-            "entrypoint": "main.py:run_export_xlsv"
+            "entrypoint": "main.py:run_export_xlsv",
+            "parameters": [
+                {
+                "name": "expressura",
+                "param_type": "string",
+                "label": "Expressura para ser Utilizada"
+                }
+            ]
         }
     ]
 }

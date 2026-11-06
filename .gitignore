@@ -25,3 +25,5 @@ dist-ssr
 
 # This is add through a CD pipeline
 python-runtime/*
+
+plugins/**/output/*
