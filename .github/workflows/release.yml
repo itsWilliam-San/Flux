@@ -1,6 +1,0 @@
-name: Release Tauri App
-
-on:
-  release:
-    types: [published]
-  workflow_dispatch:
