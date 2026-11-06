@@ -7,7 +7,7 @@ import { AlertCircle, Lock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import ExecutionResult, { type ExecutionResultData } from "./ExecutionResult";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
-import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Spinner } from "../ui/spinner";
 import { Checkbox } from "@/components/ui/checkbox";
