@@ -8,6 +8,7 @@ export interface PluginParameter {
     label: string;
     default?: string | boolean | number;
     options?: Array<string | number | boolean>;
+    required?: boolean;
 }
 
 export interface PluginExport {

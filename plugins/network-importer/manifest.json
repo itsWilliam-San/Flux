@@ -17,13 +17,15 @@
                     "param_type": "select",
                     "label": "Fonte de Dados",
                     "options": ["sample_network", "custom_file"],
-                    "default": "sample_network"
+                    "default": "sample_network",
+                    "required": true
                 },
                 {
                     "name": "file_path",
                     "param_type": "string",
                     "label": "Caminho do Arquivo (se custom)",
-                    "default": ""
+                    "default": "",
+                    "required": false
                 }
             ]
         }

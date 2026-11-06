@@ -16,9 +16,10 @@
             "entrypoint": "main.py:run_export_xlsv",
             "parameters": [
                 {
-                "name": "expressura",
+                "name": "expessura",
                 "param_type": "string",
-                "label": "Expressura para ser Utilizada"
+                "label": "Diâmetro + Expressura para ser Utilizada (m)",
+                "required": true
                 }
             ]
         }

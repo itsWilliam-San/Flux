@@ -43,6 +43,7 @@ Parameters allow the main application to automatically generate configuration fo
 - **`label`** (`string`): Label displayed next to the form field.
 - **`default`**: Default value if none is provided by the user.
 - **`options`** (`array`, optional): Only used when `param_type` is `"select"`. Lists the available choices.
+- **`required`** (`bool`, optional): If the parameter must be filled before sending it. Either using the `default` or the user selection. If not included, `false` will be the value.
 
 ---
 

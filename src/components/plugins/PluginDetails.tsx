@@ -7,6 +7,10 @@ import { AlertCircle, Lock } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import ExecutionResult, { type ExecutionResultData } from "./ExecutionResult";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
+import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Spinner } from "../ui/spinner";
+import { Checkbox } from "@/components/ui/checkbox";
 
 interface PluginDetailsProps {
     plugin: PluginDescriptor | null;
@@ -226,154 +230,153 @@ export default function PluginDetails({
                                 key={item.id}
                                 className="rounded-lg border border-border p-4 bg-card"
                             >
-                                <div className="flex items-start justify-between gap-4">
-                                    <div>
-                                        <p className="font-medium text-foreground">
-                                            {item.label}
-                                        </p>
-                                        <p className="mt-1 text-sm text-muted-foreground">
-                                            {item.description}
-                                        </p>
-                                        <p className="mt-1 font-mono text-xs text-muted-foreground">
-                                            {item.entrypoint}
-                                        </p>
-                                    </div>
-                                    {canExecute ? (
-                                        <Button
-                                            type="button"
-                                            size="sm"
-                                            onClick={() =>
-                                                handleExecuteAction(item.id)
-                                            }
-                                            disabled={
-                                                isExecuting || exporterLocked
-                                            }
-                                            title={
-                                                exporterLocked
-                                                    ? t("common.blocked_title")
-                                                    : undefined
-                                            }
-                                            className="cursor-pointer"
-                                        >
-                                            {isExecuting ? (
-                                                t("common.running")
-                                            ) : exporterLocked ? (
-                                                <span className="flex items-center gap-1.5">
-                                                    <Lock className="size-3.5" />
-                                                    {t("common.blocked")}
-                                                </span>
-                                            ) : (
-                                                t("plugin_detail.run_action")
-                                            )}
-                                        </Button>
-                                    ) : null}
-                                </div>
-
-                                {item.parameters &&
-                                    item.parameters.length > 0 ? (
-                                    <div className="mt-3 border-t border-border pt-3">
-                                        <p className="text-xs font-semibold uppercase text-muted-foreground mb-2">
-                                            {t("common.parameters")}
-                                        </p>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            {item.parameters.map((param) => {
-                                                const val = getParamValue(
-                                                    item.id,
-                                                    param,
-                                                );
-
-                                                return (
-                                                    <div
-                                                        key={param.name}
-                                                        className="flex flex-col gap-1 text-xs"
-                                                    >
-                                                        <label className="font-medium text-foreground">
-                                                            {param.label}
-                                                        </label>
-                                                        {param.param_type ===
-                                                            "boolean" ? (
-                                                            <div className="flex items-center gap-2 mt-1">
-                                                                <input
-                                                                    type="checkbox"
-                                                                    checked={Boolean(
-                                                                        val,
-                                                                    )}
-                                                                    onChange={(
-                                                                        e,
-                                                                    ) =>
-                                                                        handleParamChange(
-                                                                            item.id,
-                                                                            param.name,
-                                                                            e
-                                                                                .target
-                                                                                .checked,
-                                                                        )
-                                                                    }
-                                                                    className="rounded border-border text-primary focus:ring-primary size-4"
-                                                                />
-                                                                <span className="text-muted-foreground text-xs">
-                                                                    {Boolean(
-                                                                        val,
-                                                                    )
-                                                                        ? t(
-                                                                            "common.enabled",
-                                                                        )
-                                                                        : t(
-                                                                            "common.disabled",
-                                                                        )}
-                                                                </span>
-                                                            </div>
-                                                        ) : param.param_type ===
-                                                            "select" &&
-                                                            param.options ? (
-                                                            <Select
-                                                                value={String(val ?? "")}
-                                                                onValueChange={(newValue) => handleParamChange(item.id, param.name, newValue)}>
-                                                                <SelectTrigger className="w-full h-8 text-xs bg-background text-foreground border-input">
-                                                                    <SelectValue />
-                                                                </SelectTrigger>
-                                                                <SelectContent className="bg-background text-popover-foreground border-border">
-                                                                    {param.options.map((opt, idx) => (
-                                                                        <SelectItem key={idx} value={String(opt)}>
-                                                                            {String(opt)}
-                                                                        </SelectItem>
-                                                                    ))}
-                                                                </SelectContent>
-                                                            </Select>
-                                                        ) : (
-                                                            <input
-                                                                type="text"
-                                                                value={String(
-                                                                    val ?? "",
-                                                                )}
-                                                                onChange={(
-                                                                    e,
-                                                                ) =>
-                                                                    handleParamChange(
-                                                                        item.id,
-                                                                        param.name,
-                                                                        e.target
-                                                                            .value,
-                                                                    )
-                                                                }
-                                                                className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-                                                            />
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
+                                <form
+                                    onSubmit={(e) => {
+                                        e.preventDefault();
+                                        handleExecuteAction(item.id);
+                                    }}>
+                                    <div className="flex items-start justify-between gap-4">
+                                        <div>
+                                            <p className="font-medium text-foreground">
+                                                {item.label}
+                                            </p>
+                                            <p className="mt-1 text-sm text-muted-foreground">
+                                                {item.description}
+                                            </p>
+                                            <p className="mt-1 font-mono text-xs text-muted-foreground">
+                                                {item.entrypoint}
+                                            </p>
                                         </div>
+                                        {canExecute ? (
+                                            <Button
+                                                type="submit"
+                                                size="sm"
+                                                disabled={
+                                                    isExecuting || exporterLocked
+                                                }
+                                                title={
+                                                    exporterLocked
+                                                        ? t("common.blocked_title")
+                                                        : undefined
+                                                }
+                                                className="cursor-pointer"
+                                            >
+                                                {isExecuting ? (
+                                                    <span className="flex items-center gap-1.5">
+                                                        <Spinner data-icon="inline-start" />
+                                                        {t("common.running")}
+                                                    </span>
+                                                ) : exporterLocked ? (
+                                                    <span className="flex items-center gap-1.5">
+                                                        <Lock className="size-3.5" />
+                                                        {t("common.blocked")}
+                                                    </span>
+                                                ) : (
+                                                    t("plugin_detail.run_action")
+                                                )}
+                                            </Button>
+                                        ) : null}
                                     </div>
-                                ) : null}
 
-                                {result ? (
-                                    <ExecutionResult result={result} />
-                                ) : null}
+
+                                    {item.parameters &&
+                                        item.parameters.length > 0 ? (
+                                        <div className="mt-3 border-t border-border pt-3">
+                                            <p className="text-xs font-semibold uppercase text-muted-foreground mb-2">
+                                                {t("common.parameters")}
+                                            </p>
+                                            <FieldGroup className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                {item.parameters.map((param) => {
+                                                    const val = getParamValue(
+                                                        item.id,
+                                                        param,
+                                                    );
+                                                    const isRequired = param.required ?? false;
+
+                                                    return (
+                                                        <Field key={param.name} className="fles flex-col gap-1 textxs">
+                                                            <FieldLabel htmlFor={`${item.id}-${param.name}`}>
+                                                                {param.label} {isRequired && <span className="text-destructive">*</span>}
+                                                            </FieldLabel>
+                                                            {
+                                                                param.param_type ===
+                                                                    "boolean" ? (
+                                                                    <div className="flex items-center gap-2 mt-1">
+                                                                        <Checkbox
+                                                                            id={`${item.id}-${param.name}`}
+                                                                            required={isRequired}
+                                                                            checked={Boolean(
+                                                                                val,
+                                                                            )}
+                                                                            onCheckedChange={(
+                                                                                checked,
+                                                                            ) =>
+                                                                                handleParamChange(
+                                                                                    item.id,
+                                                                                    param.name,
+                                                                                    Boolean(checked)
+                                                                                )
+                                                                            }
+                                                                        />
+                                                                    </div>
+                                                                ) : param.param_type ===
+                                                                    "select" &&
+                                                                    param.options ? (
+                                                                    <Select
+                                                                        id={`${item.id}-${param.name}`}
+                                                                        required={isRequired}
+                                                                        value={String(val ?? "")}
+                                                                        onValueChange={(newValue) => handleParamChange(item.id, param.name, newValue)}>
+                                                                        <SelectTrigger className="w-full h-8 text-xs bg-background text-foreground border-input">
+                                                                            <SelectValue />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent className="bg-background text-popover-foreground border-border">
+                                                                            {param.options.map((opt, idx) => (
+                                                                                <SelectItem key={idx} value={String(opt)}>
+                                                                                    {String(opt)}
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                ) : (
+                                                                    <Input
+                                                                        id={`${item.id}-${param.name}`}
+                                                                        required={isRequired}
+                                                                        type="text"
+                                                                        value={String(
+                                                                            val ?? "",
+                                                                        )}
+                                                                        onChange={(
+                                                                            e,
+                                                                        ) =>
+                                                                            handleParamChange(
+                                                                                item.id,
+                                                                                param.name,
+                                                                                e.target
+                                                                                    .value,
+                                                                            )
+                                                                        }
+                                                                        className="rounded-md border border-input bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                                                                    />
+                                                                )
+                                                            }
+                                                        </Field>
+                                                    );
+                                                })}
+                                            </FieldGroup>
+                                        </div>
+                                    ) : null}
+
+                                    {result ? (
+                                        <ExecutionResult result={result} />
+                                    ) : null}
+                                </form>
                             </li>
                         );
                     })}
                 </ul>
-            )}
+            )
+            }
         </section>
     );
 }
