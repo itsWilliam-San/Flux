@@ -27,3 +27,8 @@ dist-ssr
 python-runtime/*
 
 plugins/**/output/*
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
