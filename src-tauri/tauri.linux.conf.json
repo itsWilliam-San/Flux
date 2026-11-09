@@ -1,0 +1,15 @@
+{
+    "bundle": {
+        "targets": ["appimage"],
+        "linux": {
+            "appimage": {
+                "files": {
+                    "/usr/share/README.md": "../README.md"
+                }
+            }
+        }
+    },
+    "resources": [
+        "../python-runtime/**/*"
+    ]
+}

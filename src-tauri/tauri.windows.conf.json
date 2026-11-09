@@ -1,0 +1,8 @@
+{
+    "bundle": {
+        "targets": ["msi"]
+    },
+    "resources": [
+        "../python-runtime/**/*"
+    ]
+}

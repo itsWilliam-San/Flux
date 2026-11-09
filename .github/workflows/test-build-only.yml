@@ -1,4 +1,4 @@
-name: Flux CI primary
+name: Flux test-on-pr
 
 on:
   push:
@@ -16,13 +16,13 @@ permissions: {}
 
 jobs:
   build:
-    name: Build (${{ matrix.platform.os }})
+    name: Test (${{ matrix.platform.os }})
     strategy:
       fail-fast: false
       matrix:
         platform:
           - os: linux
-            runs_on: ubuntu-latest
+            runs_on: ubuntu-22.04
           - os: windows
             runs_on: windows-latest
 
@@ -47,7 +47,10 @@ jobs:
                libssl-dev \
                libayatana-appindicator3-dev \
                librsvg2-dev
-      - uses: dtolnay/rust-toolchain@stable
+
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
       - uses: swatinem/rust-cache@v2
         with:
           key: ${{ matrix.platform.os }}
@@ -88,6 +91,7 @@ jobs:
         run: |
           cd src-tauri
           cargo check
+          cd ..
 
       - name: Download and Setup Portable Python Runtime
         shell: bash
@@ -100,13 +104,6 @@ jobs:
               unzip python.zip -d python-runtime/
               rm python.zip
 
-              # 1. Baixar o get-pip.py para instalar o gerenciador de pacotes no Windows embeddable
-              curl -L https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-              ./python-runtime/python.exe get-pip.py --no-warn-script-location
-              rm get-pip.py
-
-              # 2. Instalar as bibliotecas padrão que você quer embutir
-              ./python-runtime/python.exe -m pip install --no-warn-script-location openpyxl pydantic
           else
               echo "Configurando Python Standalone para Linux..."
               curl -L https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.14.9+20261021-x86_64-unknown-linux-gnu-install_only.tar.gz -o python.tar.gz
@@ -128,5 +125,15 @@ jobs:
           (Get-Content $pthFile) -replace '#import site', 'import site' | Set-Content $pthFile
         shell: powershell
 
+      - name: Install Pip and Dependencies for Windows
+        if: matrix.platform.os == 'windows'
+        run: |
+          curl -L https://bootstrap.pypa.io/get-pip.py -o get-pip.py
+                  ./python-runtime/python.exe get-pip.py --no-warn-script-location
+                  rm get-pip.py
+
+                  # Instalar openpyxl e pydantic direto no runtime portátil
+                  ./python-runtime/python.exe -m pip install --no-warn-script-location openpyxl pydantic
+
       - name: Build Tauri App
-        run: pnpm tauri build --config src-tauri/tauri.build.conf.json
+        uses: tauri-apps/tauri-action@v1
