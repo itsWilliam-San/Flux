@@ -7,9 +7,9 @@
                     "/usr/share/README.md": "../README.md"
                 }
             }
-        }
-    },
-    "resources": [
-        "../python-runtime/**/*"
-    ]
+        },
+        "resources": [
+            "../python-runtime/**/*"
+        ]
+    }
 }
