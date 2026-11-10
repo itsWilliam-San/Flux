@@ -31,7 +31,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          persist-credential: false
+          persist-credentials: 'false'
 
       - name: Install Linux Dependencies
         if: matrix.platform.os == 'linux'
@@ -63,27 +63,6 @@ jobs:
         with:
           node-version: 20
           cache: "pnpm"
-      - name: Create Python VENV
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.14"
-          cache: "pip"
-
-      - name: Install Python Dependencies (Linux / macOS)
-        if: matrix.platform.os != 'windows'
-        run: |
-          python -m venv venv
-          ./venv/bin/activate
-          pip install --upgrade pip
-          pip install openpyxl
-
-      - name: Install Python Dependencies (Windows)
-        if: matrix.platform.os == 'windows'
-        run: |
-          python -m venv venv
-          ./venv/Scripts/Activate.ps1
-          pip install --upgrade pip
-          pip install openpyxl
 
       - name: Install JS dependencies
         run: pnpm install --frozen-lockfile
@@ -96,26 +75,28 @@ jobs:
           if [ "${{ matrix.platform.os }}" == "windows" ]; then
               echo "Configurando Python Portable para Windows..."
               curl -L https://www.python.org/ftp/python/3.14.9/python-3.14.9-embed-amd64.zip -o python.zip
-              unzip python.zip -d python-runtime/
+              unzip python.zip -d src-tauri/python-runtime/
               rm python.zip
 
           else
               echo "Configurando Python Standalone para Linux..."
               curl -L https://github.com/astral-sh/python-build-standalone/releases/download/20261021/cpython-3.14.9+20261021-x86_64-unknown-linux-gnu-install_only.tar.gz -o python.tar.gz
-              tar -xzf python.tar.gz -C python-runtime/ --strip-components=1
+              tar -xzf python.tar.gz -C src-tauri/python-runtime/ --strip-components=1
               rm python.tar.gz
 
               # O Python Standalone do Linux geralmente já vem com ensurepip ou pip integrado.
               # Garantimos que o pip está atualizado e instalamos os pacotes:
+              cd src-tauri
               ./python-runtime/bin/python3 -m ensurepip --default-pip || true
               ./python-runtime/bin/python3 -m pip install --upgrade pip
-              ./python-runtime/bin/python3 -m pip install openpyxl pydantic
+              ./python-runtime/bin/python3 -m pip install --no-warn-script-location -r ../requirements.txt
+              cd ..
           fi
 
       - name: Fix Windows Python Embeddable Path
         if: matrix.platform.os == 'windows'
         run: |
-          $pthFile = "python-runtime/python314._pth"
+          $pthFile = "src-tauri/python-runtime/python314._pth"
           # Descomenta 'import site' para que o Python embeddable enxergue as pastas de pacotes instalados (site-packages)
           (Get-Content $pthFile) -replace '#import site', 'import site' | Set-Content $pthFile
         shell: powershell
@@ -124,11 +105,11 @@ jobs:
         if: matrix.platform.os == 'windows'
         run: |
           curl -L https://bootstrap.pypa.io/get-pip.py -o get-pip.py
-                  ./python-runtime/python.exe get-pip.py --no-warn-script-location
-                  rm get-pip.py
+          ./src-tauri/python-runtime/python.exe get-pip.py --no-warn-script-location
+          rm get-pip.py
 
-                  # Instalar openpyxl e pydantic direto no runtime portátil
-                  ./python-runtime/python.exe -m pip install --no-warn-script-location openpyxl pydantic
+          # Instalar openpyxl e pydantic direto no runtime portátil
+          ./src-tauri/python-runtime/python.exe -m pip install --no-warn-script-location requirements.txt
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v1

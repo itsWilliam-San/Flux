@@ -2,7 +2,7 @@
     "bundle": {
         "targets": ["msi"],
         "resources": [
-            "../python-runtime/**/*"
+            "./python-runtime/**/*"
         ]
     }
 }

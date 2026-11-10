@@ -95,7 +95,7 @@ impl PythonRuntime {
     pub fn resolve_python_executable(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
         if cfg!(debug_assertions) {
             let output = if cfg!(target_os = "windows") {
-                std::process::Command::new("where").arg("python3").output()
+                std::process::Command::new("where.exe").arg("python").output()
             } else {
                 std::process::Command::new("which").arg("python3").output()
             };
@@ -177,6 +177,13 @@ impl PythonRuntime {
             .stderr(Stdio::piped())
             .env("PYTHONUNBUFFERED", "1")
             .env("PYTHONNOUSERSITE", "1");
+
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
 
         if !cfg!(debug_assertions) {
             if let Some(parent) = python_exe.parent() {

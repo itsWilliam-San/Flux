@@ -9,7 +9,7 @@
             }
         },
         "resources": [
-            "../python-runtime/**/*"
+            "./python-runtime/**/*"
         ]
     }
 }
