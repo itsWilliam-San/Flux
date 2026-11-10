@@ -26,7 +26,8 @@ dist-ssr
 # This is add through a CD pipeline
 python-runtime/*
 
-plugins/**/output/*
+# Plugins should not be included with this repo.
+plugins/*
 
 __pycache__/
 *.pyc

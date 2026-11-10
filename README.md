@@ -37,6 +37,8 @@ Flux is still in **Alpha** so many things are subject to change are to change or
 
 - Load/Save System data (Check the `docs/contracts/network/network-v1.md` for more info).
 - Add tag support for plugins.
+- Plugin Version Compatibility Check: Update the plugin manifest to declare compatibility with the current Flux Version.
+  Flux must validate this check before loading any plugin. Flux should also allow users to override compatibility blocks.
 - Support optional localization for third-party plugins.
 - Create a native plugin manager that can install third-party plugins from a specific source.
 - Add support for macOS users (Intel/Arm).
