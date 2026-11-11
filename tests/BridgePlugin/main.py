@@ -70,13 +70,13 @@ def start(manifest: Manifest):
                 print(f"Handhsake done")
 
                 while True:
-                    response = client_socket.recv(1024)
+                    response: bytes = client_socket.recv(1024)
 
                     if not response:
                         print("Nothing received")
                         break
                     else:
-                        print(response)
+                        dealWithRequest(response)
 
             except (ConnectionRefusedError, socket.timeout, OSError) as e:
                 print(f"[WARNING]: Failed to Connect. Attempt: {attempt}. Reason: {e}")
@@ -99,3 +99,47 @@ if __name__ == "__main__":
     manifest = loadManifest(path)
 
     start(manifest)
+
+def dealWithRequest(response: bytes):
+    response_str = response.decode('utf-8')
+
+    try:
+        req: Response = Response.model_validate_json(response_str)
+
+        # TODO: Check for what specific request we got and act accordanly
+        print(f"{req}")
+    except Exception as e:
+        err_response = ErrorResponse(
+                error=JsonError(
+                    code=-32603,
+                    message="Internal server error",
+                    data=str(e)
+                ),
+                id=None
+            )
+
+        return err_response
+
+class JsonError(BaseModel):
+    code: int
+    message: str
+    data: Optional[str] = None
+
+# This is what we should send to Flux if an error occurs
+class ErrorResponse(BaseModel):
+    jsonrpc: str = "2.0"
+    error: JsonError
+    id: Optional[str] = None
+
+# This is what we send back to Flux
+class Response(BaseModel):
+    jsonrpc: str = "2.0"
+    result: object
+    id: str
+
+# This is what we get from Flux
+class Request(BaseModel):
+    jsonrpc: str
+    method: str
+    params: object
+    id: str
