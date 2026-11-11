@@ -24,7 +24,7 @@ dist-ssr
 *.sw?
 
 # This is add through a CD pipeline
-src-tauri/python-runtime/*
+python-runtime/*
 
 # Plugins should not be included with this repo.
 plugins/*
