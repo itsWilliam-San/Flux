@@ -22,7 +22,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: action/checkout@v6
 
       - name: setup pnpm
         uses: pnpm/action-setup@v6
@@ -48,11 +48,11 @@ jobs:
         run: pnpm install
 
       - name: Setup Python Runtime (Linux)
-        if: matrix.platform.os == 'linux'
+        if: matrix.platform == 'ubuntu-22.04'
         run: bash scripts/setup-python.sh
 
       - name: Setup Python Runtime (Windows)
-        if: matrix.platform.os == 'windows'
+        if: matrix.platform == 'windows-latest'
         shell: powershell
         run: ./scripts/setup-python.ps1
 
