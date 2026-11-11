@@ -22,7 +22,7 @@ jobs:
             args: ""
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: action/checkout@v6
+      - uses: actions/checkout@v6
 
       - name: setup pnpm
         uses: pnpm/action-setup@v6
