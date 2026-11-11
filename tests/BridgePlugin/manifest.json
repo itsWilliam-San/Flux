@@ -1,0 +1,24 @@
+{
+    "name": "Bridge Mocker",
+    "description": "Bridge Mocker for Testing purpose",
+    "version": "1.0.0",
+    "author": "William",
+    "id": "com.test.bridgemocker",
+    "category": "extractor",
+    "exports": [
+        {
+            "id": "say_hi",
+            "label": "Say Hi",
+            "description": "Print Hi {name}",
+            "entrypoint": "main.py:say_hi",
+            "parameters": [
+                {
+                    "name": "name",
+                    "param_type": "string",
+                    "label": "Username",
+                    "default": false
+                }
+            ]
+        }
+    ]
+}

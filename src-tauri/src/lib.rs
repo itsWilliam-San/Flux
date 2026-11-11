@@ -1,10 +1,12 @@
+use log::{debug, error, info, warn};
+use std::fs;
 use std::{collections::HashMap, sync::Arc};
-use tauri::WebviewWindow;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
     Emitter, Manager,
 };
+use tauri::{App, WebviewWindow};
 
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -12,6 +14,7 @@ use tokio::{
     sync::Mutex,
 };
 
+use crate::error::HandshakeError;
 use crate::plugins::{PluginDescriptor, PluginManifest, PluginOrigin};
 
 pub struct AppData {
@@ -24,6 +27,7 @@ type SocketMap = Arc<Mutex<HashMap<String, (TcpStream, PluginManifest)>>>;
 const ADDRESS: &str = "127.0.0.1:8080";
 const READ_BYTES_SOCKET: usize = 4096;
 
+mod error;
 mod network;
 mod plugins;
 
@@ -321,10 +325,40 @@ fn toggle_window(window: &WebviewWindow) {
     }
 }
 
+fn set_log(app_handle: &App) {
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .expect("Failed to get the DataDir directory for Logging");
+
+    fs::create_dir_all(&app_dir).expect("Failed to create the log directory");
+
+    let log_file_path = app_dir.join("debug.log");
+
+    fern::Dispatch::new()
+        .format(|out, message, record| {
+            out.finish(format_args!(
+                "[{}] [{}] [{}] - {}\n",
+                chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
+                record.level(),
+                record.target(),
+                message
+            ))
+        })
+        .level(log::LevelFilter::Debug)
+        .chain(fern::log_file(log_file_path).expect("Failed to open log file"))
+        .apply()
+        .expect("Failed to start global logger");
+
+    info!("Flux started. Log system activated");
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .setup(move |app| {
+            set_log(&app);
+
             let plugins_i = MenuItem::with_id(app, "plugins", "Plugin", true, None::<&str>)?;
             let separator = PredefinedMenuItem::separator(app)?;
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -378,16 +412,21 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-async fn handshake(socket: &mut TcpStream) -> Result<PluginManifest, ()> {
-    let mut buf = Vec::with_capacity(READ_BYTES_SOCKET);
+async fn handshake(socket: &mut TcpStream) -> Result<PluginManifest, HandshakeError> {
+    let mut buf = vec![0u8; READ_BYTES_SOCKET];
 
-    let n = socket.read(&mut buf).await.map_err(|_| ())?;
+    let n = socket.read(&mut buf).await?;
 
     if n == 0 {
-        return Err(());
+        error!("Conection closed by the client during the Handhsake fase");
+        return Err(HandshakeError::ConnectionClosed);
     }
 
-    let manifest: PluginManifest = serde_json::from_slice(&buf).map_err(|_| ())?;
+    let received_bytes = &buf[..n];
+
+    debug!("{}", String::from_utf8_lossy(received_bytes));
+
+    let manifest: PluginManifest = serde_json::from_slice(received_bytes)?;
 
     Ok(manifest)
 }
@@ -406,22 +445,37 @@ fn open_socket(
             let listener = match TcpListener::bind(ADDRESS).await {
                 Ok(l) => l,
                 Err(err) => {
-                    eprintln!("Could not bind socket on {}: {}", ADDRESS, err);
+                    error!("Could not bind socket on {}: {}", ADDRESS, err);
                     return;
                 }
             };
 
             loop {
                 let (mut socket, addr) = match listener.accept().await {
-                    Ok(conn) => conn,
-                    Err(_) => break,
+                    Ok(conn) => {
+                        info!("New client: {:?}", conn.1);
+                        conn
+                    }
+                    Err(e) => {
+                        error!("Couldn't get client: {:?}", e);
+                        break;
+                    }
                 };
 
-                if let Ok(manifest) = handshake(&mut socket).await {
-                    let mut guard = local_sockets.lock().await;
-                    guard.insert(manifest.id.clone(), (socket, manifest));
-                } else {
-                    // Handshake failed or disconnected
+                match handshake(&mut socket).await {
+                    Ok(manifest) => {
+                        info!(
+                            "Handhskae done with plugin: '{}' (ID: {}) v{} from {:?}",
+                            manifest.name, manifest.id, manifest.version, addr
+                        );
+
+                        let mut guard = local_sockets.lock().await;
+                        guard.insert(manifest.id.clone(), (socket, manifest));
+                    }
+                    Err(e) => {
+                        warn!("Handshake with client {:?} failed.", addr);
+                        debug!("Detailed handshake error for {:?}: {:?}", addr, e);
+                    }
                 }
             }
         });
