@@ -30,7 +30,7 @@ Each object inside the `exports` array defines a callable feature or command exp
 - **`id`** (`string`): Unique identifier for the specific export action.
 - **`label`** (`string`): User-friendly display name for UI buttons or menus.
 - **`description`** (`string`): Explanation of what this specific action performs.
-- **`entrypoint`** (`string`): Path and method to invoke the action (e.g., `"main.py:run_detailed_export"` or `"Sancad.Plugins.ExcelExporter:RunDetailedExport"`).
+- **`entrypoint`** (`string`): method to invoke the action (e.g., `"run_detailed_export"`)
 - **`parameters`** (`array` of objects, optional): Input fields required by this action to render dynamic UI forms.
 
 ---
@@ -56,3 +56,5 @@ Communication between the backend and the plugin follows a unified format for bo
 ## Exportation Plugins
 Para plugins de exportação que precisam dos dados da rede, os valores ficaram dentro do `network` dentro do `params`.
 
+## Local Plugins Specific
+When searching for your script python, it'll always search for the main.py that should be placed in the directory that manifest.json.

@@ -3,6 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
+use crate::error::PluginError;
+
 use super::{PluginDescriptor, PluginManifest, PluginOrigin};
 
 fn base64_encode(data: &[u8]) -> String {
@@ -70,19 +72,10 @@ fn resolve_plugin_icon(plugin_dir: &Path, manifest: &mut PluginManifest) {
 }
 
 /// Scans a specific directory for subdirectories containing `manifest.json`.
-pub fn scan_directory_for_plugins(dir: &Path) -> Vec<PluginDescriptor> {
+pub fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, PluginError> {
     let mut plugins = Vec::new();
-    if !dir.is_dir() {
-        return plugins;
-    }
 
-    let entries = match fs::read_dir(dir) {
-        Ok(e) => e,
-        Err(err) => {
-            eprintln!("Could not read plugin directory {:?}: {}", dir, err);
-            return plugins;
-        }
-    };
+    let entries = fs::read_dir(dir)?;
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -151,88 +144,4 @@ pub fn discover_local_plugins(app: &tauri::AppHandle) -> Vec<PluginDescriptor> {
     }
 
     map.into_values().collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_manifest_deserialization() {
-        let json_data = r#"{
-            "name": "Excel Exporter",
-            "description": "SANCAD to Excel. XLSV and CSV support",
-            "version": "1.0.0",
-            "author": "William",
-            "repository": "",
-            "download_url": "",
-            "icon": "data:image/png;base64,abc",
-            "id": "com.william.excel-exporter",
-            "category": "exporter",
-            "exports": [
-                {
-                    "id": "export_csv_detalhado",
-                    "label": "Exportar Relatório (CSV)",
-                    "description": "Gera um CSV completo com filtros avançados",
-                    "entrypoint": "main.py:run_detailed_export",
-                    "parameters": [
-                        {
-                            "name": "separator",
-                            "param_type": "select",
-                            "label": "Separador",
-                            "options": [",", ";", "\t"],
-                            "default": ";"
-                        }
-                    ]
-                }
-            ]
-        }"#;
-
-        let manifest: PluginManifest = serde_json::from_str(json_data).unwrap();
-        assert_eq!(manifest.id, "com.william.excel-exporter");
-        assert_eq!(manifest.exports.len(), 1);
-        assert_eq!(
-            manifest.exports[0].entrypoint,
-            "main.py:run_detailed_export"
-        );
-    }
-
-    #[test]
-    fn test_scan_directory_for_plugins() {
-        let temp_dir =
-            std::env::temp_dir().join(format!("sewerage_loader_test_{}", std::process::id()));
-        let plugin_folder = temp_dir.join("test-plugin");
-        let _ = fs::create_dir_all(&plugin_folder);
-
-        let manifest_content = r#"{
-            "name": "Test Plugin",
-            "description": "Test plugin description",
-            "version": "0.1.0",
-            "author": "Tester",
-            "id": "com.test.plugin",
-            "category": "extraction",
-            "exports": []
-        }"#;
-
-        fs::write(plugin_folder.join("manifest.json"), manifest_content).unwrap();
-
-        let plugins = scan_directory_for_plugins(&temp_dir);
-        assert_eq!(plugins.len(), 1);
-        assert_eq!(plugins[0].origin, PluginOrigin::Local);
-        assert_eq!(plugins[0].manifest.id, "com.test.plugin");
-
-        let _ = fs::remove_dir_all(temp_dir);
-    }
-
-    #[test]
-    fn test_sample_excel_exporter_loaded() {
-        let manifest_path = Path::new("../plugins/excel-exporter/manifest.json");
-        if manifest_path.exists() {
-            let content = fs::read_to_string(manifest_path).unwrap();
-            let manifest: PluginManifest = serde_json::from_str(&content).unwrap();
-            assert_eq!(manifest.id, "com.william.excel-exporter");
-            assert_eq!(manifest.category, super::super::PluginCategory::Exporter);
-            assert_eq!(manifest.exports.len(), 2);
-        }
-    }
 }

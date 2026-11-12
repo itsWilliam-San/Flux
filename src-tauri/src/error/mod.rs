@@ -12,3 +12,9 @@ pub enum HandshakeError {
     #[error("Falha ao desserializar o manifesto JSON: {0}")]
     Json(#[from] serde_json::Error),
 }
+
+#[derive(Error, Debug)]
+pub enum PluginError {
+    #[error("Erro de I/O Durante leitura do diretorio de Plugins")]
+    Io(#[from] std::io::Error),
+}

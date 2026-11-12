@@ -13,7 +13,7 @@
             "id": "export_csv_detalhado",
             "label": "Exportar Relatório (CSV)",
             "description": "Gera um CSV completo com filtros avançados",
-            "entrypoint": "main.py:run_detailed_export",
+            "entrypoint": "run_detailed_export",
             "parameters": [
                 {
                     "name": "separator",
@@ -34,7 +34,7 @@
             "id": "export_xlsv_detalhado",
             "label": "Exportar Relatório (XLSV)",
             "description": "Gera um XLSV completo com filtros avançados",
-            "entrypoint": "main.py:run_export_csv",
+            "entrypoint": "run_export_csv",
             "parameters": [
                 {
                     "name": "sheet_name",

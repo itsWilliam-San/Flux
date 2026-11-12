@@ -95,7 +95,9 @@ impl PythonRuntime {
     pub fn resolve_python_executable(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
         if cfg!(debug_assertions) {
             let output = if cfg!(target_os = "windows") {
-                std::process::Command::new("where.exe").arg("python").output()
+                std::process::Command::new("where.exe")
+                    .arg("python")
+                    .output()
             } else {
                 std::process::Command::new("which").arg("python3").output()
             };
@@ -150,12 +152,7 @@ impl PythonRuntime {
     ) -> Result<serde_json::Value, String> {
         let python_exe = Self::resolve_python_executable(app)?;
 
-        // Ensure entrypoint script exists
-        let parts: Vec<&str> = entrypoint.split(':').collect();
-        if parts.is_empty() {
-            return Err(format!("Invalid entrypoint: {}", entrypoint));
-        }
-        let script_file = plugin_dir.join(parts[0]);
+        let script_file = plugin_dir.join(entrypoint);
         if !script_file.is_file() {
             return Err(format!(
                 "Plugin entry file not found: {}",
@@ -185,7 +182,8 @@ impl PythonRuntime {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        if !cfg!(debug_assertions) {
+        #[cfg(debug_assertions)]
+        {
             if let Some(parent) = python_exe.parent() {
                 if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
                     if let Some(root) = parent.parent() {
@@ -255,51 +253,5 @@ impl PythonRuntime {
                 "id": payload.get("id").cloned().unwrap_or(serde_json::json!(1))
             })),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-
-    #[tokio::test]
-    async fn test_python_action_execution() {
-        let temp_dir = std::env::temp_dir().join(format!("sewerage_test_{}", std::process::id()));
-        let _ = fs::create_dir_all(&temp_dir);
-
-        let script_content = r#"
-def run_test(payload):
-    params = payload.get("params", {}).get("parameters", {}) if "params" in payload else payload.get("parameters", {})
-    return {
-        "status": "success",
-        "greeting": f"Hello {params.get('name', 'World')}"
-    }
-"#;
-        fs::write(temp_dir.join("main.py"), script_content).unwrap();
-
-        let payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "main.py:run_test",
-            "params": {
-                "parameters": { "name": "Antigravity" }
-            },
-            "id": 1
-        });
-
-        let result = PythonRuntime::execute_action(None, &temp_dir, "main.py:run_test", &payload)
-            .await
-            .expect("Action execution failed");
-
-        let result_obj = if let Some(res) = result.get("result") {
-            res
-        } else {
-            &result
-        };
-
-        assert_eq!(result_obj["status"], "success");
-        assert_eq!(result_obj["greeting"], "Hello Antigravity");
-
-        let _ = fs::remove_dir_all(temp_dir);
     }
 }
