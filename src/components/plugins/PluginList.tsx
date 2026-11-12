@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import SearchComponent from "../Search";
 import { Button } from "../ui/button";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ import type {
 } from "@/types/plugins";
 import { Lock, Settings } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 const DEFAULT_CATEGORIES: { id: PluginCategory; labelKey: string; fallback: string }[] = [
     { id: "extraction", labelKey: "plugin_list.extraction", fallback: "Extraction" },
@@ -46,6 +47,23 @@ export default function PluginList({
     onOpenSettings,
 }: PluginListProps) {
     const { t } = useTranslation();
+
+    useEffect
+    useEffect(() => {
+        let unlistenFn: UnlistenFn | undefined;
+
+        listen<boolean>("should-update-plugin-list", (_event) => {
+            onRefresh();
+        }).then((unlisten) => {
+            unlistenFn = unlisten;
+        });
+
+        return () => {
+            if (unlistenFn) {
+                unlistenFn();
+            }
+        };
+    }, []);
 
     const categories = useMemo(() => {
         const catMap = new Map<string, string>();
@@ -101,8 +119,8 @@ export default function PluginList({
                         category.id === "extraction"
                             ? t("plugin_list.extraction")
                             : category.id === "exporter"
-                            ? t("plugin_list.exporter")
-                            : category.fallback;
+                                ? t("plugin_list.exporter")
+                                : category.fallback;
 
                     return (
                         <section key={category.id} className="mb-4">
@@ -169,7 +187,7 @@ export default function PluginList({
                                                                         ? "bg-muted text-foreground font-medium"
                                                                         : "hover:bg-muted/60 text-muted-foreground hover:text-foreground",
                                                                     muted &&
-                                                                        "opacity-60",
+                                                                    "opacity-60",
                                                                 )}
                                                             >
                                                                 <div className="flex items-center justify-between gap-1.5">

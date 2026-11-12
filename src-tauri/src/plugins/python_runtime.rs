@@ -2,97 +2,23 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-const RUNNER_SCRIPT: &str = r#"
-import sys
-import json
-import importlib.util
-from pathlib import Path
+use crate::error::PythonRuntimeError::{self, MainFileNotFound};
+use crate::AppData;
 
-def main():
-    if len(sys.argv) < 3:
-        sys.stderr.write("Usage: runner.py <plugin_dir> <entrypoint>\n")
-        sys.exit(1)
-
-    plugin_dir = Path(sys.argv[1]).resolve()
-    entrypoint = sys.argv[2]
-
-    if ":" not in entrypoint:
-        sys.stderr.write(f"Invalid entrypoint format: {entrypoint}. Expected 'file.py:function_name'\n")
-        sys.exit(1)
-
-    file_name, func_name = entrypoint.split(":", 1)
-    target_file = plugin_dir / file_name
-
-    if not target_file.is_file():
-        sys.stderr.write(f"Plugin entry file not found: {target_file}\n")
-        sys.exit(1)
-
-    if str(plugin_dir) not in sys.path:
-        sys.path.insert(0, str(plugin_dir))
-
-    # Read stdin JSON-RPC payload
-    try:
-        raw_in = sys.stdin.read()
-        payload = json.loads(raw_in) if raw_in.strip() else {}
-    except Exception as e:
-        sys.stderr.write(f"Failed to parse stdin JSON payload: {e}\n")
-        sys.exit(1)
-
-    # Import module
-    try:
-        spec = importlib.util.spec_from_file_location("plugin_entry_module", str(target_file))
-        if spec is None or spec.loader is None:
-            sys.stderr.write(f"Could not load module specification from {target_file}\n")
-            sys.exit(1)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-    except Exception as e:
-        sys.stderr.write(f"Error loading module {file_name}: {e}\n")
-        sys.exit(1)
-
-    func = getattr(mod, func_name, None)
-    if func is None or not callable(func):
-        sys.stderr.write(f"Function '{func_name}' not found or not callable in {file_name}\n")
-        sys.exit(1)
-
-    req_id = payload.get("id") if isinstance(payload, dict) else 1
-
-    try:
-        result = func(payload)
-        # If the plugin returns an envelope that already is JSON-RPC 2.0, keep it.
-        if isinstance(result, dict) and "jsonrpc" in result:
-            response = result
-        else:
-            response = {
-                "jsonrpc": "2.0",
-                "result": result if result is not None else {"status": "success"},
-                "id": req_id
-            }
-        sys.stdout.write(json.dumps(response))
-    except Exception as e:
-        error_response = {
-            "jsonrpc": "2.0",
-            "error": {
-                "code": -32000,
-                "message": str(e)
-            },
-            "id": req_id
-        }
-        sys.stdout.write(json.dumps(error_response))
-        sys.stderr.write(f"Exception during execution of {func_name}: {e}\n")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-"#;
+const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
+const PYTHON_RUNNER: &str = include_str!("./runner.py");
+const PYTHON_MAIN_FILE: &str = "main.py";
 
 pub struct PythonRuntime;
 
 impl PythonRuntime {
-    pub fn resolve_python_executable(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
+    pub fn resolve_python_executable(
+        app: &tauri::AppHandle,
+    ) -> Result<PathBuf, PythonRuntimeError> {
         if cfg!(debug_assertions) {
             let output = if cfg!(target_os = "windows") {
                 std::process::Command::new("where.exe")
@@ -113,51 +39,48 @@ impl PythonRuntime {
             }
         } else {
             // 1. Tauri bundled resource directory
-            if let Some(handle) = app {
-                if let Ok(res_dir) = handle.path().resource_dir() {
-                    let dir = res_dir.join("python-runtime");
+            if let Ok(res_dir) = app.path().resource_dir() {
+                let dir = res_dir.join(PYTHON_RUNTIME_FOLDER);
 
-                    if cfg!(target_os = "windows") {
-                        let win_bin1 = dir.join("python.exe");
-                        let win_bin2 = dir.join("Scripts").join("python.exe");
-                        if win_bin1.is_file() {
-                            return Ok(win_bin1);
-                        }
-                        if win_bin2.is_file() {
-                            return Ok(win_bin2);
-                        }
-                    } else {
-                        let unix_bin1 = dir.join("bin").join("python3");
-                        let unix_bin2 = dir.join("bin").join("python");
-                        if unix_bin1.is_file() {
-                            return Ok(unix_bin1);
-                        }
-                        if unix_bin2.is_file() {
-                            return Ok(unix_bin2);
-                        }
+                if cfg!(target_os = "windows") {
+                    let win_bin1 = dir.join("python.exe");
+                    let win_bin2 = dir.join("Scripts").join("python.exe");
+
+                    if win_bin1.is_file() {
+                        return Ok(win_bin1);
+                    }
+                    if win_bin2.is_file() {
+                        return Ok(win_bin2);
+                    }
+                } else {
+                    let unix_bin1 = dir.join("bin").join("python3");
+                    let unix_bin2 = dir.join("bin").join("python");
+                    if unix_bin1.is_file() {
+                        return Ok(unix_bin1);
+                    }
+                    if unix_bin2.is_file() {
+                        return Ok(unix_bin2);
                     }
                 }
             }
         }
 
-        Err("No Python executable found. Please ensure the bundled portable Python runtime is installed in python-runtime.".to_string())
+        Err(PythonRuntimeError::NoPythonExecutableFound)
     }
 
     /// Executes an entrypoint for a local plugin using the isolated Python runtime.
     pub async fn execute_action(
-        app: Option<&tauri::AppHandle>,
+        state: &tauri::State<'_, AppData>,
         plugin_dir: &Path,
         entrypoint: &str,
         payload: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        let python_exe = Self::resolve_python_executable(app)?;
+    ) -> Result<serde_json::Value, PythonRuntimeError> {
+        let python_exe = state.python_runtime.clone();
 
-        let script_file = plugin_dir.join(entrypoint);
+        let script_file = plugin_dir.join(PYTHON_MAIN_FILE);
+
         if !script_file.is_file() {
-            return Err(format!(
-                "Plugin entry file not found: {}",
-                script_file.display()
-            ));
+            return Err(PythonRuntimeError::MainFileNotFound);
         }
 
         let payload_str = serde_json::to_string(payload)

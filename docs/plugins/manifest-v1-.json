@@ -2,18 +2,19 @@
     "name": "Excel Exporter",
     "description": "SANCAD to Excel. XLSV and CSV support",
     "version": "1.0.0",
-    "author": "William",
+    "author": ["William"],
     "repository": "",
     "download_url": "",
-    "icon": "sadf123",
+    "icon": "assets/icon.png",
     "id": "com.william.excel-exporter",
-    "category": "exporter",
+    "tags": ["exporter", "Excel"],
     "exports": [
         {
             "id": "export_csv_detalhado",
             "label": "Exportar Relatório (CSV)",
             "description": "Gera um CSV completo com filtros avançados",
             "entrypoint": "run_detailed_export",
+            "require_network_data": true,
             "parameters": [
                 {
                     "name": "separator",
@@ -35,6 +36,7 @@
             "label": "Exportar Relatório (XLSV)",
             "description": "Gera um XLSV completo com filtros avançados",
             "entrypoint": "run_export_csv",
+            "require_network_data": true,
             "parameters": [
                 {
                     "name": "sheet_name",

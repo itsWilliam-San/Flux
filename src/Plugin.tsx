@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import PluginDetails from "./components/plugins/PluginDetails";
 import PluginList from "./components/plugins/PluginList";
 import type { PluginDescriptor } from "./types/plugins";
@@ -62,7 +62,7 @@ export default function PluginsWindow({
     }, [fetchPlugins]);
 
     useEffect(() => {
-        let unlistenFn: (() => void) | undefined;
+        let unlistenFn: UnlistenFn | undefined;
         listen<boolean>("network-data-changed", (event) => {
             setHasStoredNetwork(Boolean(event.payload));
         }).then((unlisten) => {

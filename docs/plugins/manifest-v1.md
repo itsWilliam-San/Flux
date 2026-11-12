@@ -10,14 +10,12 @@ The plugin manifest (`manifest.json`) describes a plugin's metadata, identity, a
 - **`name`** (`string`): Human-readable name of the plugin.
 - **`description`** (`string`): Brief summary of what the plugin does.
 - **`version`** (`string`): Semantic versioning string (e.g., `"1.0.0"`).
-- **`author`** (`string`): Name of the developer or organization.
+- **`author`** (`array` of `string`): Name(s) of the developer(s) or organization.
 - **`repository`** (`string`, optional): URL of the source code repository.
 - **`download_url`** (`string`, optional): Direct download link for updates. Clients may also send `downloadUrl`; the host normalizes to `download_url`.
-- **`icon`** (`string`, optional): A Base64 icon file.
+- **`icon`** (`string`, optional): A Path to your icon, or a HTTP/HTTPS URL.
 - **`id`** (`string`): Unique reverse-domain identifier (e.g., `"com.mike.excel-exporter"`).
-- **`category`** (`string`): Plugin role. Required. One of:
-  - `"extraction"` — produces a sewer network `System` for the host to store.
-  - `"exporter"` — consumes a stored `System` (disabled in the UI until data exists).
+- **`tags`** (`array` of `string`): What category your plugin is in. May be anything.
 - **`exports`** (`array` of objects): List of actions/functions provided by the plugin.
 
 Local vs Bridge (TCP / external CAD) is **not** part of the manifest. The host attaches `origin` when listing plugins.
@@ -32,6 +30,8 @@ Each object inside the `exports` array defines a callable feature or command exp
 - **`description`** (`string`): Explanation of what this specific action performs.
 - **`entrypoint`** (`string`): method to invoke the action (e.g., `"run_detailed_export"`)
 - **`parameters`** (`array` of objects, optional): Input fields required by this action to render dynamic UI forms.
+- **`require_network_data`** (`boolean`, optional): If in order for this function to work, it needs the network
+  data first. if empty, defaults to `false`.
 
 ---
 
@@ -55,6 +55,19 @@ Communication between the backend and the plugin follows a unified format for bo
 
 ## Exportation Plugins
 Para plugins de exportação que precisam dos dados da rede, os valores ficaram dentro do `network` dentro do `params`.
+A estrutura geral vai paracer o que está abaixo
+
+```json
+{
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "say_hi",
+    "params": {
+        "network": { See the "network-v1.json" for more detail },
+        "parameters": { "say_hi" parameters }
+    }
+}
+```
 
 ## Local Plugins Specific
 When searching for your script python, it'll always search for the main.py that should be placed in the directory that manifest.json.
