@@ -32,6 +32,7 @@ Each object inside the `exports` array defines a callable feature or command exp
 - **`parameters`** (`array` of objects, optional): Input fields required by this action to render dynamic UI forms.
 - **`require_network_data`** (`boolean`, optional): If in order for this function to work, it needs the network
   data first. if empty, defaults to `false`.
+- **`update_network_data`** (`boolean`, optional): If your function returns or changes the Network Data, mark this option as `true` and Flux will use the object inside the `result` field as the new Network Data. This works even if no other network data was imported before. Default to `false` if empty. If this options is `true`, **no other data** should be inside of it.
 
 ---
 

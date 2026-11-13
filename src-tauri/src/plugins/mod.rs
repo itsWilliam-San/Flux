@@ -46,6 +46,14 @@ pub struct PluginExport {
     pub parameters: Option<Vec<PluginParameter>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub require_network_data: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub update_network_data: Option<bool>,
+}
+
+impl PluginManifest {
+    pub fn get_export(&self, export_id: &str) -> Option<&PluginExport> {
+        self.exports.iter().find(|export| export.id == export_id)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

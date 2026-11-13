@@ -7,8 +7,16 @@
     "download_url": "",
     "icon": "assets/icon.png",
     "id": "com.william.excel-exporter",
-    "tags": ["exporter", "Excel"],
+    "tags": ["exporter", "importer", "Excel"],
     "exports": [
+      {
+        "id": "change_pv_names",
+        "label": "Change PV names",
+        "description": "Changes all PV names to only numbers",
+        "entrypoint": "change_pv_names",
+        "require_network_data": true,
+        "update_network_data": true
+      },
         {
             "id": "export_csv_detalhado",
             "label": "Exportar Relatório (CSV)",

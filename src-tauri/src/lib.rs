@@ -1,7 +1,7 @@
-use crate::error::PluginError;
+use crate::error::PluginError::{self, BridgeConnectionClosed};
 use log::{debug, error, info, warn};
+use serde_json::Map;
 use std::fs;
-use std::iter::Map;
 use std::path::PathBuf;
 use std::{collections::HashMap, sync::Arc};
 use tauri::{
@@ -17,9 +17,9 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::error::HandshakeError;
-use crate::plugins::rpc::json_rpc::RpcRequest;
-use crate::plugins::{PluginDescriptor, PluginManifest, PluginOrigin};
+use crate::error::{HandshakeError, JsonRpcError, TransportError};
+use crate::plugins::rpc::{RpcError, RpcId, RpcRequest, RpcResponse};
+use crate::plugins::{PluginDescriptor, PluginExport, PluginManifest, PluginOrigin};
 
 pub struct AppData {
     pub sockets: SocketMap,
@@ -29,12 +29,42 @@ pub struct AppData {
 
 type SocketMap = Arc<Mutex<HashMap<String, (TcpStream, PluginManifest)>>>;
 
+// TODO This probably should change to a config file in XDG_CONFIG_HOME or smth.
+// Later I'll need to implement a database to hold the network data anyway so
+// let's keep it like this 'till that day ig.
 const ADDRESS: &str = "127.0.0.1:8080";
 const READ_BYTES_SOCKET: usize = 4096;
 
 mod error;
 mod network;
 mod plugins;
+
+async fn send_buffer(message: Vec<u8>, socket: &mut TcpStream) -> Result<(), TransportError> {
+    socket.write_all(&message).await?;
+    socket.flush().await?;
+
+    Ok(())
+}
+
+async fn read_buffer(
+    buffer: &mut Vec<u8>,
+    socket: &mut TcpStream,
+) -> Result<usize, TransportError> {
+    let n = socket.read(buffer).await?;
+
+    if n == 0 {
+        return Err(TransportError::ConnectionClosed);
+    }
+
+    Ok(n)
+}
+
+fn try_to_response(buffer: &Vec<u8>, n: usize) -> Result<RpcResponse, JsonRpcError> {
+    let response: RpcResponse =
+        serde_json::from_slice(&buffer[..n]).map_err(|_| JsonRpcError::NotValidRPCResponse)?;
+
+    Ok(response)
+}
 
 fn extract_system_from_value(val: &serde_json::Value) -> Result<network::System, String> {
     if let Some(inner) = val.get("system") {
@@ -51,7 +81,7 @@ fn extract_system_from_value(val: &serde_json::Value) -> Result<network::System,
 async fn list_plugins(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppData>,
-) -> Result<Vec<PluginDescriptor>, String> {
+) -> Result<Vec<PluginDescriptor>, PluginError> {
     let sockets = state.sockets.lock().await;
 
     let mut plugins: Vec<PluginDescriptor> = sockets
@@ -64,23 +94,24 @@ async fn list_plugins(
         .collect();
 
     // Discover local Python plugins
-    let local_plugins = plugins::loader::discover_local_plugins(&app);
+    let local_plugins = plugins::loader::discover_local_plugins(&app)?;
     plugins.extend(local_plugins);
 
     Ok(plugins)
 }
 
-async fn get_params(
+async fn set_plugin_parameters(
+    add_network_data: bool,
     parameters: Option<serde_json::Value>,
     state: &tauri::State<'_, AppData>,
-) -> Map<String, Value> {
+) -> serde_json::Map<String, serde_json::Value> {
     let mut params_map = serde_json::Map::new();
     params_map.insert(
         "parameters".to_string(),
         parameters.unwrap_or(serde_json::json!({})),
     );
 
-    {
+    if add_network_data {
         let net = state.network.lock().await;
         if let Some(ref system) = *net {
             if let Ok(net_val) = serde_json::to_value(system) {
@@ -94,19 +125,19 @@ async fn get_params(
 
 /// Check if the action requires any prior data (Like the Network Data)
 /// If it does, return an error, otherwise an Ok
-async fn may_run(manifest: &PluginManifest) -> Result<(), PluginError> {
-    let export = manifest
-        .exports
-        .iter()
-        .find(|e| e.id == action || e.entrypoint == action)
-        .ok_or_else(|| PluginError::ActionNotFound)?;
-
-    let require_network_data = export.require_network_data.unwrap_or_else(false);
+async fn may_run(
+    export: &PluginExport,
+    state: &tauri::State<'_, AppData>,
+) -> Result<(), PluginError> {
+    let require_network_data = export.require_network_data.unwrap_or(false);
 
     if require_network_data {
         let net = state.network.lock().await;
         if net.is_none() {
-            Err(PluginError::RequiredNetworkDataNotFound);
+            return Err(PluginError::RequiredNetworkDataNotFound(format!(
+                "The action {} required the Network Data pre-loaded before it can run",
+                export.id
+            )));
         }
     }
 
@@ -114,7 +145,7 @@ async fn may_run(manifest: &PluginManifest) -> Result<(), PluginError> {
 }
 
 /// plugin_id = Identification of that plugin as written in its manifest
-/// action: Identification of that specific action is described in its manifest
+/// action: PluginExport.id
 /// parameters: Parameters of that action as described in its manifest
 #[tauri::command]
 async fn execute_plugin_action(
@@ -123,7 +154,7 @@ async fn execute_plugin_action(
     plugin_id: String,
     action: String,
     parameters: Option<serde_json::Value>,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, PluginError> {
     let is_bridge = {
         let sockets = state.sockets.lock().await;
         sockets.contains_key(&plugin_id)
@@ -135,43 +166,29 @@ async fn execute_plugin_action(
             .get_mut(&plugin_id)
             .ok_or_else(|| PluginError::PluginDisconnected(plugin_id))?;
 
-        may_run(&manifest).await?;
-        let params_map = get_params(parameters).await;
+        let export = manifest
+            .get_export(&action)
+            .ok_or(PluginError::ActionNotFound)?;
 
-        // TODO Createa a nicer way to do this.
-        let payload = RpcRequest::new(export.entrypoint, params_map, 1);
+        may_run(export, &state).await?;
 
-        let payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": export.entrypoint,
-            "params": serde_json::Value::Object(params_map),
-            "id": 1
-        });
+        let should_add_network_data = export.require_network_data.unwrap_or(false);
+        let params_map = set_plugin_parameters(should_add_network_data, parameters, &state).await;
 
-        let mut payload_bytes = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
+        let id = RpcId::Number(1); // TODO Check if we actually need a ID for RPC. If we should, we must change this so ID is actually unique.
+        let payload = RpcRequest::new(action, params_map, Some(id));
+
+        // TODO continue from here
+        let mut payload_bytes = serde_json::to_vec(&payload)?;
         payload_bytes.push(b'\n');
 
-        socket
-            .write_all(&payload_bytes)
-            .await
-            .map_err(|e| format!("Failed to send data to bridge: {}", e))?;
-        socket
-            .flush()
-            .await
-            .map_err(|e| format!("Failed to flush data to bridge: {}", e))?;
+        send_buffer(payload_bytes, &mut socket).await?;
 
         let mut buf = vec![0u8; 65536];
-        let n = socket
-            .read(&mut buf)
-            .await
-            .map_err(|e| format!("Failed to read data from bridge: {}", e))?;
-        if n == 0 {
-            return Err("Bridge connection closed by peer".to_string());
-        }
+        read_buffer(&mut buf, &mut socket).await?;
 
-        let raw_response: serde_json::Value = serde_json::from_slice(&buf[..n])
-            .map_err(|e| format!("Invalid JSON response from bridge: {}", e))?;
-
+        // TODO This code tries to detect if it's an Error Message or an RpcResponse
+        // This should be put as a function probably.
         if let Some(err_val) = raw_response.get("error") {
             let err_msg = err_val
                 .get("message")
