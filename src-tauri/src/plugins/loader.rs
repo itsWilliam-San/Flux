@@ -90,7 +90,9 @@ fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, Plugi
 
 /// Returns the primary plugins directory inside app_data_dir, creating it if needed.
 fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, PluginError> {
-    let app_data = app.path().app_data_dir()?;
+    let app_data = app.path().app_data_dir().inspect_err(|e| {
+        error!("Failed to get the XDG_STATE_HOME Path while searching for the Plugins folder")
+    })?;
 
     let plugins_dir = app_data.join(PLUGIN_FOLDER);
 

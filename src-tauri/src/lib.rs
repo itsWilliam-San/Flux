@@ -1,5 +1,8 @@
+use crate::error::PluginError;
 use log::{debug, error, info, warn};
 use std::fs;
+use std::iter::Map;
+use std::path::PathBuf;
 use std::{collections::HashMap, sync::Arc};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -67,7 +70,10 @@ async fn list_plugins(
     Ok(plugins)
 }
 
-async fn get_params(parameters: Option<serde_json::Value>) -> Map<String, Value> {
+async fn get_params(
+    parameters: Option<serde_json::Value>,
+    state: &tauri::State<'_, AppData>,
+) -> Map<String, Value> {
     let mut params_map = serde_json::Map::new();
     params_map.insert(
         "parameters".to_string(),
@@ -378,19 +384,19 @@ fn set_log(app_handle: &App) {
 }
 
 fn set_tray(app: &mut App) {
-    let plugins_i = MenuItem::with_id(app, "plugins", "Plugin", true, None::<&str>)?;
-    let separator = PredefinedMenuItem::separator(app)?;
-    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+    let plugins_i = MenuItem::with_id(app, "plugins", "Plugin", true, None::<&str>)
+        .expect("Failed to create the 'Plugin' Menu Item for the Tray System");
+    let separator = PredefinedMenuItem::separator(app)
+        .expect("Failed to create the 'Separator' Menu Item for the Tray System");
+    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)
+        .expect("Failed to create the 'Quit' Menu Item for the Tray System");
 
-    let menu = if !cfg!(debug_assertions) {
-        let restart_i = MenuItem::with_id(app, "restart", "Restart Flux", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&plugins_i, &separator, &quit_i])
+        .expect("Failed to create the Menu for the Tray System");
 
-        Menu::with_items(app, &[&plugins_i, &separator, &restart_i, &quit_i])?
-    } else {
-        Menu::with_items(app, &[&plugins_i, &separator, &quit_i])?
-    };
-
-    let plugins = app.get_webview_window("plugins").unwrap();
+    let plugins = app
+        .get_webview_window("plugins")
+        .expect("Failed to find the 'plugin' webview window");
 
     let _ = TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
@@ -403,7 +409,8 @@ fn set_tray(app: &mut App) {
             "restart" => app.request_restart(),
             _ => {}
         })
-        .build(app)?;
+        .build(app)
+        .unwrap_or_else(|e| panic!("Failed to create the TrayIcon. {}", e.to_string()));
 }
 
 pub fn run() {

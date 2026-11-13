@@ -15,6 +15,9 @@ pub enum HandshakeError {
 
 #[derive(Error, Debug)]
 pub enum PluginError {
+    #[error("A Tauri error occurred. {0}")]
+    TauriError(#[from] tauri::Error),
+
     #[error("Erro de I/O Durante leitura do diretorio de Plugins: {0}")]
     Io(#[from] std::io::Error),
 
@@ -28,7 +31,7 @@ pub enum PluginError {
     ActionNotFound,
 
     #[error("A ação {0} necessita de um sistema hidraulico carregado primeiro.")]
-    RequiredNetworkDataNotFound,
+    RequiredNetworkDataNotFound(String),
 }
 
 #[derive(Error, Debug)]
