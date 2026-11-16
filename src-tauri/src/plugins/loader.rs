@@ -7,7 +7,7 @@ use tauri::Manager;
 const MANIFEST_FILENAME: &str = "manifest.json";
 const PLUGIN_FOLDER: &str = "plugins";
 
-use crate::error::PluginError;
+use crate::error::InternalPluginError::{self};
 
 use super::{PluginDescriptor, PluginManifest, PluginOrigin};
 
@@ -31,7 +31,7 @@ fn resolve_plugin_icon(plugin_dir: &Path, manifest: &mut PluginManifest) {
             warn!(
                 "Plugin {} describes an icon, but it's neither a HTTP/HTTPS nor a valid file path.\nManifest.icon: {}",
                 manifest.name,
-                manifest.icon
+                icon_val
             );
 
             // Remove it to prevent any trouble
@@ -41,7 +41,7 @@ fn resolve_plugin_icon(plugin_dir: &Path, manifest: &mut PluginManifest) {
 }
 
 /// Scans a specific directory for subdirectories containing `manifest.json`.
-fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, PluginError> {
+fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, InternalPluginError> {
     let entries = fs::read_dir(dir)?;
 
     let plugins = entries
@@ -89,9 +89,12 @@ fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, Plugi
 }
 
 /// Returns the primary plugins directory inside app_data_dir, creating it if needed.
-fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, PluginError> {
+fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, InternalPluginError> {
     let app_data = app.path().app_data_dir().inspect_err(|e| {
-        error!("Failed to get the XDG_STATE_HOME Path while searching for the Plugins folder")
+        error!(
+            "Failed to get the XDG_STATE_HOME Path while searching for the Plugins folder. {}",
+            e.to_string()
+        )
     })?;
 
     let plugins_dir = app_data.join(PLUGIN_FOLDER);
@@ -106,7 +109,7 @@ fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, PluginError> 
 /// Discovers all local plugins across the user app_data plugins folder and workspace ./plugins.
 pub fn discover_local_plugins(
     app: &tauri::AppHandle,
-) -> Result<Vec<PluginDescriptor>, PluginError> {
+) -> Result<Vec<PluginDescriptor>, InternalPluginError> {
     let mut map: HashMap<String, PluginDescriptor> = HashMap::new();
 
     #[cfg(debug_assertions)]

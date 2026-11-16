@@ -1,12 +1,13 @@
+use crate::error::{InternalPluginError, JsonRpcError};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tauri::Manager;
-use tauri_plugin_opener::OpenerExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-use crate::error::PythonRuntimeError::{self, MainFileNotFound};
+use crate::error::PythonRuntimeError::{self};
+use crate::plugins::rpc::{RpcRequest, RpcResponse};
 use crate::AppData;
 
 const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
@@ -73,8 +74,8 @@ impl PythonRuntime {
         state: &tauri::State<'_, AppData>,
         plugin_dir: &Path,
         entrypoint: &str,
-        payload: &serde_json::Value,
-    ) -> Result<serde_json::Value, PythonRuntimeError> {
+        payload: &RpcRequest,
+    ) -> Result<RpcResponse, PythonRuntimeError> {
         let python_exe = state.python_runtime.clone();
 
         let script_file = plugin_dir.join(PYTHON_MAIN_FILE);
@@ -83,12 +84,11 @@ impl PythonRuntime {
             return Err(PythonRuntimeError::MainFileNotFound);
         }
 
-        let payload_str = serde_json::to_string(payload)
-            .map_err(|e| format!("Failed to serialize payload: {}", e))?;
+        let payload_str = serde_json::to_string(payload).expect("This shouldn't fail");
 
         let mut cmd = Command::new(&python_exe);
         cmd.arg("-c")
-            .arg(RUNNER_SCRIPT)
+            .arg(PYTHON_RUNNER)
             .arg(plugin_dir.to_string_lossy().to_string())
             .arg(entrypoint)
             .current_dir(plugin_dir)
@@ -116,65 +116,35 @@ impl PythonRuntime {
             }
         }
 
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn Python process ({:?}): {}", python_exe, e))?;
+        let mut child = cmd.spawn()?;
 
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(payload_str.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write to Python stdin: {}", e))?;
+            stdin.write_all(payload_str.as_bytes()).await?;
         }
 
         let timeout_duration = Duration::from_secs(30);
         let output = tokio::time::timeout(timeout_duration, child.wait_with_output())
             .await
-            .map_err(|_| "Plugin execution timed out after 30 seconds".to_string())?
-            .map_err(|e| format!("Error waiting for Python process: {}", e))?;
+            .map_err(|_| PythonRuntimeError::ScriptTimeOut)?
+            .map_err(|e| PythonRuntimeError::PythonProcessWaitingError(e.to_string()))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            return Err(format!(
-                "Python script execution failed with exit code {:?}.\nStderr:\n{}\nStdout:\n{}",
-                output.status.code(),
-                stderr.trim(),
-                stdout.trim()
+            return Err(PythonRuntimeError::PluginError(
+                InternalPluginError::InternalError(stderr),
             ));
         }
 
         if stdout.trim().is_empty() {
-            return Ok(serde_json::json!({
-                "jsonrpc": "2.0",
-                "result": {
-                    "status": "success",
-                    "message": "Action completed with no output"
-                },
-                "id": payload.get("id").cloned().unwrap_or(serde_json::json!(1))
-            }));
+            return Ok(RpcResponse::Notification);
         }
 
-        match serde_json::from_str::<serde_json::Value>(&stdout) {
-            Ok(json_val) => {
-                if let Some(err_obj) = json_val.get("error") {
-                    let msg = err_obj
-                        .get("message")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown JSON-RPC error");
-                    return Err(msg.to_string());
-                }
-                Ok(json_val)
-            }
-            Err(_) => Ok(serde_json::json!({
-                "jsonrpc": "2.0",
-                "result": {
-                    "status": "success",
-                    "output": stdout.trim()
-                },
-                "id": payload.get("id").cloned().unwrap_or(serde_json::json!(1))
-            })),
-        }
+        let response = serde_json::from_str::<RpcResponse>(&stdout).map_err(|e| {
+            InternalPluginError::Rpc(JsonRpcError::NotValidRPCResponse(e.to_string()))
+        })?;
+
+        Ok(response)
     }
 }

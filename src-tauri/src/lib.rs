@@ -1,6 +1,8 @@
-use crate::error::PluginError::{self, BridgeConnectionClosed};
+use crate::error::InternalPluginError::{self};
+use crate::network::System;
+use anyhow::Result;
 use log::{debug, error, info, warn};
-use serde_json::Map;
+use tauri::utils::config_v1::CspDirectiveSources;
 use std::fs;
 use std::path::PathBuf;
 use std::{collections::HashMap, sync::Arc};
@@ -17,14 +19,24 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::error::{HandshakeError, JsonRpcError, TransportError};
-use crate::plugins::rpc::{RpcError, RpcId, RpcRequest, RpcResponse};
+use crate::error::{HandshakeError, JsonRpcError, PluginError, TransportError};
+use crate::plugins::rpc::{RpcError, RpcId, RpcParams, RpcRequest, RpcResponse};
 use crate::plugins::{PluginDescriptor, PluginExport, PluginManifest, PluginOrigin};
 
 pub struct AppData {
     pub sockets: SocketMap,
     pub network: Arc<Mutex<Option<network::System>>>,
     pub python_runtime: PathBuf,
+}
+
+impl AppData {
+    pub async fn update_network_data(&self, system: Option<System>) {
+        let mut net_guard = self.network.lock().await;
+        *net_guard = system;
+    }
+
+    pub fn foo(&self, plugin_id: String) -> Result<serde_json::Value, PluginError> {
+    }
 }
 
 type SocketMap = Arc<Mutex<HashMap<String, (TcpStream, PluginManifest)>>>;
@@ -34,29 +46,28 @@ type SocketMap = Arc<Mutex<HashMap<String, (TcpStream, PluginManifest)>>>;
 // let's keep it like this 'till that day ig.
 const ADDRESS: &str = "127.0.0.1:8080";
 const READ_BYTES_SOCKET: usize = 4096;
+const NETWORK_UPDATE_EVENT: &str = "network-data-changed";
+const SHOULD_UPDATE_PLUGIN_LIST_EVENT : &str = "should-update-plugin-list";
 
 mod error;
 mod network;
 mod plugins;
 
-async fn send_buffer(message: Vec<u8>, socket: &mut TcpStream) -> Result<(), TransportError> {
-    socket.write_all(&message).await?;
-    socket.flush().await?;
+// TODO Depending on the size of the Network Data, this might not be nigh enough for holding all the content
+// so it'll be necessary in the future to create and manage a data base.
+// I don't know if I'll add it in the 1.0 or maybe 2.0 since for my use case (and the others working with this software)
+// 4kb might be enough.
+async fn read_socket_payload(socket: &mut TcpStream) -> Result<Vec<u8>, TransportError> {
+    let mut buf = vec![0u8; READ_BYTES_SOCKET];
 
-    Ok(())
-}
-
-async fn read_buffer(
-    buffer: &mut Vec<u8>,
-    socket: &mut TcpStream,
-) -> Result<usize, TransportError> {
-    let n = socket.read(buffer).await?;
+    let n = socket.read(&mut buf).await?;
 
     if n == 0 {
         return Err(TransportError::ConnectionClosed);
     }
 
-    Ok(n)
+    buf.shrink_to_fit();
+    Ok(buf)
 }
 
 fn try_to_response(buffer: &Vec<u8>, n: usize) -> Result<RpcResponse, JsonRpcError> {
@@ -66,22 +77,11 @@ fn try_to_response(buffer: &Vec<u8>, n: usize) -> Result<RpcResponse, JsonRpcErr
     Ok(response)
 }
 
-fn extract_system_from_value(val: &serde_json::Value) -> Result<network::System, String> {
-    if let Some(inner) = val.get("system") {
-        let sys =
-            serde_json::from_value::<network::System>(inner.clone()).map_err(|e| e.to_string())?;
-
-        return Ok(sys);
-    }
-
-    return Err("No field \"system\" found inside the received response".into());
-}
-
 #[tauri::command]
 async fn list_plugins(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppData>,
-) -> Result<Vec<PluginDescriptor>, PluginError> {
+) -> Result<Vec<PluginDescriptor>, String> {
     let sockets = state.sockets.lock().await;
 
     let mut plugins: Vec<PluginDescriptor> = sockets
@@ -104,23 +104,25 @@ async fn set_plugin_parameters(
     add_network_data: bool,
     parameters: Option<serde_json::Value>,
     state: &tauri::State<'_, AppData>,
-) -> serde_json::Map<String, serde_json::Value> {
+) -> RpcParams {
     let mut params_map = serde_json::Map::new();
+
+    // TODO Maybe this needs some rework, so we don't depend much on raw string
     params_map.insert(
         "parameters".to_string(),
         parameters.unwrap_or(serde_json::json!({})),
     );
 
-    if add_network_data {
+    let network = if add_network_data {
         let net = state.network.lock().await;
         if let Some(ref system) = *net {
             if let Ok(net_val) = serde_json::to_value(system) {
                 params_map.insert("network".to_string(), net_val);
             }
         }
-    }
+    };
 
-    params_map
+    RpcParams::new(params)
 }
 
 /// Check if the action requires any prior data (Like the Network Data)
@@ -128,22 +130,128 @@ async fn set_plugin_parameters(
 async fn may_run(
     export: &PluginExport,
     state: &tauri::State<'_, AppData>,
-) -> Result<(), PluginError> {
+) -> Result<(), InternalPluginError> {
     let require_network_data = export.require_network_data.unwrap_or(false);
 
     if require_network_data {
         let net = state.network.lock().await;
         if net.is_none() {
-            return Err(PluginError::RequiredNetworkDataNotFound(format!(
-                "The action {} required the Network Data pre-loaded before it can run",
-                export.id
-            )));
+            return Err(InternalPluginError::RequiredNetworkDataNotFound);
         }
     }
 
     Ok(())
 }
 
+async fn execute_local_action(
+    state: tauri::State<'_, AppData>,
+    app: tauri::AppHandle,
+    manifest: &mut PluginManifest,
+    plugin_id: String,
+    action: String,
+    parameters: Option<serde_json::Value>,
+) -> Result<serde_json::Value, PluginError> {
+    let local_plugins = plugins::loader::discover_local_plugins(&app)?;
+
+    let target = local_plugins
+        .into_iter()
+        .find(|p| p.manifest.id == plugin_id)
+        .ok_or(PluginError::PluginNotFound)?;
+
+    let export = target.manifest.exports.into_iter().find(|export| export.id == action).ok_or(PluginError::ActionNotFound)?;
+
+    let plugin_dir_str = target
+        .path
+        .expect("A local plugin doesn't have a PATH, this should not happen");
+
+    let plugin_dir = std::path::PathBuf::from(plugin_dir_str);
+
+    let is_exporter = export.update_network_data.unwrap_or(false);
+
+    let params = if  is_exporter || parameters.is_some() {
+        let params = set_plugin_parameters(is_exporter, parameters, &state).await;
+        Some(params)
+    } else {
+        None
+    };
+
+    let payload = RpcRequest::new(export.entrypoint, params, Some(RpcId::Number(1)));
+    let entrypoint = export.entrypoint;
+
+    let  plugins::python_runtime::PythonRuntime::execute_action(
+        &state,
+        &plugin_dir,
+        &entrypoint,
+        &payload,
+        ).await.map_err(|e| e.to_string());
+
+    let result = match response {
+       RpcResponse::Error { error , ..}  => {
+           serde_json::Value::from(RpcError)
+       }
+       RpcResponse::Success { result, ..} => {
+           let system = serde_json::from_value(result).map_err(|e| InternalPluginError::IncorrectNetworkData(e.to_string()))?;
+
+           if is_exporter {
+                state.update_network_data(system).await;
+                let _ = app.emit(NETWORK_UPDATE_EVENT, true);
+           }
+
+           serde_json::Value::Null
+       }
+       RpcResponse::Notification => {
+           serde_json::Value::Null
+       }
+    };
+
+    Ok(result)
+}
+
+async fn execute_bridge_action(
+    state: tauri::State<'_, AppData>,
+    manifest: &mut PluginManifest,
+    plugin_id: String,
+    action: String,
+    parameters: Option<serde_json::Value>,
+    app: tauri::AppHandle,
+) -> Result<serde_json::Value, InternalPluginError> {
+    let mut sockets_guard = state.sockets.lock().await;
+    let (socket, manifest) = sockets_guard
+        .get_mut(&plugin_id)
+        .ok_or_else(|| InternalPluginError::PluginDisconnected(plugin_id))?;
+
+    let export = manifest
+        .get_export(&action)
+        .ok_or(InternalPluginError::ActionNotFound)?;
+
+    may_run(export, &state).await?;
+
+    let should_add_network_data = export.require_network_data.unwrap_or(false);
+    let params_map = set_plugin_parameters(should_add_network_data, parameters, &state).await;
+
+    let id = RpcId::Number(1); // TODO Check if we actually need a ID for RPC. If we should, we must change this so ID is actually unique.
+
+    let payload = RpcRequest::new(action, params_map, Some(id));
+    payload.send_payload(socket).await?;
+    let raw_payload = read_socket_payload(&mut socket).await?;
+    let rpc_response = RpcResponse::new(&raw_payload)?;
+
+    let result_value = match rpc_response {
+        RpcResponse::Error { error, .. } => return Err(error),
+        RpcResponse::Success { result, .. } => result,
+    };
+
+    let is_extraction = export.update_network_data.unwrap_or(false);
+
+    if is_extraction {
+        let system = serde_json::from_value::<network::System>(result_value.to_owned())
+            .map_err(|e| InternalPluginError::NotANetworkData(e.to_string()))?;
+
+        state.update_network_data(Some(system)).await;
+    }
+
+    return Ok(result_value);
+}
 /// plugin_id = Identification of that plugin as written in its manifest
 /// action: PluginExport.id
 /// parameters: Parameters of that action as described in its manifest
@@ -154,140 +262,17 @@ async fn execute_plugin_action(
     plugin_id: String,
     action: String,
     parameters: Option<serde_json::Value>,
-) -> Result<serde_json::Value, PluginError> {
+) -> Result<serde_json::Value, String> {
     let is_bridge = {
         let sockets = state.sockets.lock().await;
         sockets.contains_key(&plugin_id)
     };
 
-    if is_bridge {
-        let mut sockets_guard = state.sockets.lock().await;
-        let (socket, manifest) = sockets_guard
-            .get_mut(&plugin_id)
-            .ok_or_else(|| PluginError::PluginDisconnected(plugin_id))?;
-
-        let export = manifest
-            .get_export(&action)
-            .ok_or(PluginError::ActionNotFound)?;
-
-        may_run(export, &state).await?;
-
-        let should_add_network_data = export.require_network_data.unwrap_or(false);
-        let params_map = set_plugin_parameters(should_add_network_data, parameters, &state).await;
-
-        let id = RpcId::Number(1); // TODO Check if we actually need a ID for RPC. If we should, we must change this so ID is actually unique.
-        let payload = RpcRequest::new(action, params_map, Some(id));
-
-        // TODO continue from here
-        let mut payload_bytes = serde_json::to_vec(&payload)?;
-        payload_bytes.push(b'\n');
-
-        send_buffer(payload_bytes, &mut socket).await?;
-
-        let mut buf = vec![0u8; 65536];
-        read_buffer(&mut buf, &mut socket).await?;
-
-        // TODO This code tries to detect if it's an Error Message or an RpcResponse
-        // This should be put as a function probably.
-        if let Some(err_val) = raw_response.get("error") {
-            let err_msg = err_val
-                .get("message")
-                .and_then(|m| m.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| err_val.to_string());
-            return Err(err_msg);
-        }
-
-        let result_value = raw_response
-            .get("result")
-            .cloned()
-            .unwrap_or_else(|| raw_response.clone());
-
-        if is_extraction {
-            let system = extract_system_from_value(&result_value)?;
-            let mut net_guard = state.network.lock().await;
-            *net_guard = Some(system);
-            let _ = app.emit("network-data-changed", true);
-        }
-
-        return Ok(result_value);
-    }
-
-    // 2. Discover local plugins to find matching ID
-    let local_plugins = plugins::loader::discover_local_plugins(&app);
-    let target = local_plugins
-        .into_iter()
-        .find(|p| p.manifest.id == plugin_id)
-        .ok_or_else(|| format!("Plugin '{}' not found", plugin_id))?;
-
-    // If it's an export plugin, block execution if no network data is stored
-    if is_exporter {
-        let net = state.network.lock().await;
-        if net.is_none() {
-            return Err(
-                "Cannot execute export plugin: No hydraulic network data is loaded. Please import network data first."
-                    .to_string(),
-            );
-        }
-    }
-
-    let plugin_dir_str = target
-        .path
-        .ok_or_else(|| format!("Plugin '{}' does not have a local path", plugin_id))?;
-    let plugin_dir = std::path::PathBuf::from(plugin_dir_str);
-
-    // Verify the action exists in exports
-    let export = target
-        .manifest
-        .exports
-        .iter()
-        .find(|e| e.id == action || e.entrypoint == action)
-        .ok_or_else(|| format!("Action '{}' not found in plugin exports", action))?;
-
-    // Build JSON-RPC 2.0 params map
-    let mut params_map = serde_json::Map::new();
-    params_map.insert(
-        "parameters".to_string(),
-        parameters.unwrap_or(serde_json::json!({})),
-    );
-
-    // If network data exists, attach it to params
-    {
-        let net = state.network.lock().await;
-        if let Some(ref system) = *net {
-            if let Ok(net_val) = serde_json::to_value(system) {
-                params_map.insert("network".to_string(), net_val);
-            }
-        }
-    }
-
-    let payload = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": export.entrypoint,
-        "params": serde_json::Value::Object(params_map),
-        "id": 1
-    });
-
-    let raw_response = plugins::python_runtime::PythonRuntime::execute_action(
-        &state,
-        &plugin_dir,
-        &export.entrypoint,
-        &payload,
-    )
-    .await?;
-
-    let result_value = raw_response
-        .get("result")
-        .cloned()
-        .unwrap_or_else(|| raw_response.clone());
-
-    // If extraction/import plugin, save returned network into AppData
-    if is_extraction {
-        let system = extract_system_from_value(&result_value)?;
-        let mut net_guard = state.network.lock().await;
-        *net_guard = Some(system);
-        let _ = app.emit("network-data-changed", true);
-    }
+    let result_value = if is_bridge {
+        execute_bridge_action().await.map_err(|e| e.to_string())?
+    } else {
+        execute_local_action().map_err(|e| e.to_string())?
+    };
 
     Ok(result_value)
 }
@@ -314,25 +299,23 @@ async fn set_network_data(
 ) -> Result<(), String> {
     let mut guard = state.network.lock().await;
     *guard = Some(system);
-    let _ = app.emit("network-data-changed", true);
+    let _ = app.emit(NETWORK_UPDATE_EVENT, true);
     Ok(())
 }
 
 fn should_update_plugin_list(app: &tauri::AppHandle) -> Result<(), String> {
-    let _ = app.emit("should-update-plugin-list", true);
+    let _ = app.emit(SHOULD_UPDATE_PLUGIN_LIST_EVENT, true);
     Ok(())
 }
+
 
 /// Clean the current network data
 #[tauri::command]
 async fn clear_network_data(
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppData>,
-) -> Result<(), String> {
-    let mut guard = state.network.lock().await;
-    *guard = None;
-    let _ = app.emit("network-data-changed", false);
-    Ok(())
+) {
+    state.update_network_data(None).await;
+    let _ = app.emit(NETWORK_UPDATE_EVENT, false);
 }
 
 #[tauri::command]

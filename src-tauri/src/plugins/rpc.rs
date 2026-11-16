@@ -1,5 +1,10 @@
-use crate::JsonRpcError::{self, NotValidRPCParams};
+use crate::{
+    error::TransportError,
+    network::System,
+    JsonRpcError::{self, NotValidRPCParams},
+};
 use serde::{Deserialize, Serialize};
+use tokio::io::TcpStream;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
@@ -16,12 +21,30 @@ pub enum RpcParams {
     ByPosition(Vec<serde_json::Value>),
 }
 
+impl RpcParams {
+    pub fn new(params: serde_json::Map<String, serde_json::Value>) -> Self {
+        RpcParams::ByName(params)
+    }
+
+    pub fn new(params: Vec<serde_json::Value>) -> Self {
+        RpcParams::ByPosition(params)
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcError {
     pub code: i32,
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<serde_json::Value>,
+}
+
+impl RpcResponse {
+    pub fn new(payload: &Vec<u8>) -> Result<RpcResponse, TransportError> {
+        let rpc_response: RpcResponse = serde_json::from_slice(payload)?;
+
+        Ok(rpc_response)
+    }
 }
 
 #[derive(Deserialize, Debug)]
@@ -39,6 +62,7 @@ pub enum RpcResponse {
         id: Option<RpcId>,
         error: RpcError,
     },
+    Notification,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -58,6 +82,15 @@ impl RpcRequest {
         self.id.is_none()
     }
 
+    pub fn new(method: String, params: Option<RpcParams>, id: Option<RpcId>) -> Self {
+        RpcRequest {
+            jsonrpc: String::from("2.0"),
+            method,
+            params,
+            id,
+        }
+    }
+
     pub fn new(
         method: String,
         params: serde_json::Map<String, serde_json::Value>,
@@ -70,5 +103,15 @@ impl RpcRequest {
             params: my_params,
             id,
         }
+    }
+
+    pub async fn send_payload(&self, socket: &mut TcpStream) -> Result<(), TransportError> {
+        let mut payload_bytes = serde_json::to_vec(&self)?;
+        payload_bytes.push(b'\n');
+
+        socket.write_all(&payload_bytes).await?;
+        socket.flush().await?;
+
+        Ok(())
     }
 }
