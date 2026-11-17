@@ -1,4 +1,4 @@
-use crate::error::{InternalPluginError, JsonRpcError};
+use crate::error::{JsonRpcError, PluginError};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
@@ -73,9 +73,10 @@ impl PythonRuntime {
     pub async fn execute_action(
         state: &tauri::State<'_, AppData>,
         plugin_dir: &Path,
-        entrypoint: &str,
         payload: &RpcRequest,
     ) -> Result<RpcResponse, PythonRuntimeError> {
+        // AppData will not hold the PythonRuntime anymore, the internal works should be of concern of this module only
+        // AppData will only hold this struct and use something like python_runtime.execute_action(path, payload)
         let python_exe = state.python_runtime.clone();
 
         let script_file = plugin_dir.join(PYTHON_MAIN_FILE);

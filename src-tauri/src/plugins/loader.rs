@@ -7,7 +7,7 @@ use tauri::Manager;
 const MANIFEST_FILENAME: &str = "manifest.json";
 const PLUGIN_FOLDER: &str = "plugins";
 
-use crate::error::InternalPluginError::{self};
+use crate::error::AppError;
 
 use super::{PluginDescriptor, PluginManifest, PluginOrigin};
 
@@ -40,8 +40,8 @@ fn resolve_plugin_icon(plugin_dir: &Path, manifest: &mut PluginManifest) {
     }
 }
 
-/// Scans a specific directory for subdirectories containing `manifest.json`.
-fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, InternalPluginError> {
+// TODO I think this functions is mixing responsabilities, analyze it later.
+fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, AppError> {
     let entries = fs::read_dir(dir)?;
 
     let plugins = entries
@@ -89,7 +89,7 @@ fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, Inter
 }
 
 /// Returns the primary plugins directory inside app_data_dir, creating it if needed.
-fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, InternalPluginError> {
+pub fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError> {
     let app_data = app.path().app_data_dir().inspect_err(|e| {
         error!(
             "Failed to get the XDG_STATE_HOME Path while searching for the Plugins folder. {}",
@@ -107,9 +107,7 @@ fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, InternalPlugi
 }
 
 /// Discovers all local plugins across the user app_data plugins folder and workspace ./plugins.
-pub fn discover_local_plugins(
-    app: &tauri::AppHandle,
-) -> Result<Vec<PluginDescriptor>, InternalPluginError> {
+pub fn discover_local_plugins(app: &tauri::AppHandle) -> Result<Vec<PluginDescriptor>, AppError> {
     let mut map: HashMap<String, PluginDescriptor> = HashMap::new();
 
     #[cfg(debug_assertions)]

@@ -104,14 +104,4 @@ impl RpcRequest {
             id,
         }
     }
-
-    pub async fn send_payload(&self, socket: &mut TcpStream) -> Result<(), TransportError> {
-        let mut payload_bytes = serde_json::to_vec(&self)?;
-        payload_bytes.push(b'\n');
-
-        socket.write_all(&payload_bytes).await?;
-        socket.flush().await?;
-
-        Ok(())
-    }
 }
