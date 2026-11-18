@@ -8,8 +8,9 @@ const MANIFEST_FILENAME: &str = "manifest.json";
 const PLUGIN_FOLDER: &str = "plugins";
 
 use crate::error::AppError;
+use crate::plugins::plugin::{Plugin, PluginDescription};
 
-use super::{PluginDescriptor, PluginManifest, PluginOrigin};
+use super::PluginManifest;
 
 /// Resolve the Plugin icon if it has one.
 /// The expected behavior changes dependeing if it's a Local or Bridge Plugin
@@ -107,8 +108,8 @@ pub fn get_user_plugins_dir(app: &tauri::AppHandle) -> Result<PathBuf, AppError>
 }
 
 /// Discovers all local plugins across the user app_data plugins folder and workspace ./plugins.
-pub fn discover_local_plugins(app: &tauri::AppHandle) -> Result<Vec<PluginDescriptor>, AppError> {
-    let mut map: HashMap<String, PluginDescriptor> = HashMap::new();
+pub fn discover_local_plugins(local_data_dir: &Path) -> Result<Vec<PluginDescription>, AppError> {
+    let mut map: HashMap<String, Plugin> = HashMap::new();
 
     #[cfg(debug_assertions)]
     {
@@ -126,10 +127,8 @@ pub fn discover_local_plugins(app: &tauri::AppHandle) -> Result<Vec<PluginDescri
     }
 
     // 2. User app data directory plugins
-    if let Ok(user_dir) = get_user_plugins_dir(app) {
-        for plugin in scan_directory_for_plugins(&user_dir)? {
-            map.entry(plugin.manifest.id.clone()).or_insert(plugin);
-        }
+    for plugin in scan_directory_for_plugins(&local_data_dir)? {
+        map.entry(plugin.manifest.id.clone()).or_insert(plugin);
     }
 
     Ok(map.into_values().collect())

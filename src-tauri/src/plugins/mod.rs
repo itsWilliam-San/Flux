@@ -2,29 +2,15 @@ pub mod loader;
 pub mod python_runtime;
 pub mod rpc;
 
-use std::path::PathBuf;
-
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
 
 use crate::{
-    error::{PluginError, TransportError}, plugins::{python_runtime::PythonRuntime, rpc::{RpcRequest, RpcResponse}},
+    error::PluginError,
+    plugins::{
+        python_runtime::PythonRuntime,
+        rpc::{RpcRequest, RpcResponse},
+    },
 };
-
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum PluginOrigin {
-    Local,
-    Bridge,
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct PluginDescriptor {
-    pub origin: PluginOrigin,
-    pub manifest: PluginManifest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub path: Option<String>,
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PluginManifest {
@@ -91,70 +77,124 @@ pub struct ActionExecutionPayload {
     pub parameters: Option<serde_json::Value>,
 }
 
-trait Plugin {
-    async fn send_rpc(&mut self, payload: &RpcRequest) -> Result<RpcResponse, PluginError>;
-}
+pub mod plugin {
+    use std::{
+        io::{BufRead, BufReader, Write},
+        path::{Path, PathBuf},
+        process::{Command, Stdio},
+        sync::mpsc::{self, Sender},
+        thread,
+    };
 
-struct BridgePlugin {
-    socket: TcpStream,
-    manifest: PluginManifest,
-}
+    use crate::{error::AppError, plugins::loader::discover_local_plugins};
 
-struct LocalPlugin {
-    manifest: PluginManifest,
-    path: PathBuf,
-}
+    use super::*;
 
-const READ_BYTES_SOCKET: usize = 4096;
+    pub struct Plugin {
+        pub description: PluginDescription,
+        handle: PluginHandle,
+    }
 
-impl BridgePlugin {
-    // TODO Depending on the size of the Network Data, this might not be nigh enough for holding all the content
-    // so it'll be necessary in the future to create and manage a data base.
-    // I don't know if I'll add it in the 1.0 or maybe 2.0 since for my use case (and the others working with this software)
-    // 4kb might be enough.
-    async fn read_socket_payload(&self) -> Result<Vec<u8>, TransportError> {
-        let mut buf = vec![0u8; READ_BYTES_SOCKET];
+    struct PluginHandle {
+        stdin_sender: Sender<RpcRequest>,
+        thread_handle: thread::JoinHandle<()>,
+    }
 
-        let n = self.socket.read(&mut buf).await?;
+    pub struct PluginDescription {
+        pub manifest: PluginManifest,
+        pub path: PathBuf,
+    }
 
-        if n == 0 {
-            return Err(TransportError::ConnectionClosed);
+    impl Plugin {
+        /// Inicializa o processo do plugin e suas threads de I/O (stdin / stdout)
+        pub fn start(
+            description: PluginDescription,
+            runtime: &PythonRuntime,
+        ) -> Result<Self, AppError> {
+            let (tx, rx) = mpsc::channel::<RpcRequest>();
+
+            let path = description.path.clone();
+            let base_cmd = runtime.base_command(&path);
+
+            let thread_handle = thread::spawn(move || {
+                let mut child = base_cmd
+                    .arg(&path)
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::piped())
+                    .spawn()
+                    .expect("Failed to execute Child Plugin");
+
+                let mut stdin = child.stdin.take().expect("Failed to open stdin");
+                let stdout = child.stdout.take().expect("Failed to open stdout");
+
+                // Sub-thread opcional para ler o stdout do Python sem bloquear a escrita
+                let _stdout_thread = thread::spawn(move || {
+                    let reader = BufReader::new(stdout);
+                    for line in reader.lines() {
+                        if let Ok(response_str) = line {
+                            // TODO: Aqui você faria o parse da string para RpcResponse
+                            // e despacharia para o canal global do Tauri/Core se necessário.
+                            println!("[Plugin Stdout]: {}", response_str);
+                        } else {
+                            break;
+                        }
+                    }
+                });
+
+                // Loop principal da thread: aguarda requisições RPC para enviar ao stdin do processo
+                while let Ok(request) = rx.recv() {
+                    if let Ok(json_string) = serde_json::to_string(&request) {
+                        if let Err(e) = writeln!(stdin, "{}", json_string) {
+                            eprintln!("Erro ao escrever no stdin do plugin: {}", e);
+                            break;
+                        }
+
+                        if let Err(e) = stdin.flush() {
+                            eprintln!("Erro ao dar flush no stdin: {}", e);
+                            break;
+                        }
+                    }
+                }
+            });
+
+            Ok(Self {
+                description,
+                handle: PluginHandle {
+                    stdin_sender: tx,
+                    thread_handle,
+                },
+            })
         }
 
-        // TODO: This creates unecessary allocation but improves DX ig.
-        // I need to use cargo-flamegraph or smth so I may know if this is acceptable or not.
-        // Maybe this won't be enough and some real use-case might be more usefull idk.
-        // Create an issue later if this is a real problem and we refactor it. For know let's keep it like this
-        let buf = buf[..n].to_owned();
-
-        Ok(buf)
+        /// Envia uma requisição RPC para o plugin de forma assíncrona/não-bloqueante via canal
+        pub fn send_rpc(&self, payload: RpcRequest) -> Result<(), PluginError> {
+            self.handle
+                .stdin_sender
+                .send(payload)
+                .map_err(|_| PluginError::ChannelClosed)?;
+            Ok(())
+        }
     }
-}
 
-impl Plugin for BridgePlugin {
-    async fn send_rpc(&mut self, payload: &RpcRequest) -> Result<RpcResponse, PluginError> {
-        let mut payload_bytes = serde_json::to_vec(&self)?;
-        payload_bytes.push(b'\n');
+    /// Descobre e inicializa todos os plugins locais encontrados no diretório
+    pub fn start_plugins(local_data_dir: &Path) -> Result<Vec<Plugin>, AppError> {
+        let plugin_descriptions: Vec<PluginDescription> = discover_local_plugins(local_data_dir)?;
+        let mut loaded_plugins = Vec::new();
 
-        self.socket.write_all(&payload_bytes).await?;
-        self.socket.flush().await?;
+        // Exemplo de runtime mockado ou injetado (ajuste conforme a sua struct PythonRuntime)
+        let runtime = PythonRuntime::default();
 
-        let raw_payload = self.read_socket_payload().await?;
+        for desc in plugin_descriptions {
+            match Plugin::start(desc, &runtime) {
+                Ok(plugin) => loaded_plugins.push(plugin),
+                Err(e) => {
+                    eprintln!("Falha ao carregar plugin: {:?}", e);
+                    // Como especificado: um plugin falhar não derruba os outros
+                }
+            }
+        }
 
-        let rpc_response = RpcResponse::new(&raw_payload)?;
-        Ok(rpc_response)
-    }
-}
-
-impl Plugin for LocalPlugin {
-    async fn send_rpc(&mut self, payload: &RpcRequest) -> Result<RpcResponse, PluginError> {
-        let export = self
-            .manifest
-            .exports
-            .into_iter()
-            .find(|export| export.entrypoint == payload.method)
-            .ok_or(PluginError::ActionNotFound)?;
-
-        PythonRuntime::execute_action(state, plugin_dir, entrypoint, payload)
+        Ok(loaded_plugins)
     }
 }
