@@ -1,8 +1,10 @@
 use crate::network::System;
 use crate::plugins::python_runtime::PythonRuntime;
 use log::{debug, error, info, warn};
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::path::Path;
 use std::{collections::HashMap, sync::Arc};
+use tauri::path::BaseDirectory;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -10,18 +12,13 @@ use tauri::{
 };
 use tauri::{App, WebviewWindow};
 
-use tokio::{
-    io::AsyncReadExt,
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-};
+use tokio::sync::Mutex;
 
 use crate::error::{JsonRpcError, PluginError};
 use crate::plugins::rpc::{RpcId, RpcParams, RpcRequest, RpcResponse};
-use crate::plugins::{PluginDescriptor, PluginExport, PluginManifest, PluginOrigin};
+use crate::plugins::{PluginDescriptor, PluginExport, PluginManifest};
 
 pub struct AppData {
-    pub plugins: Vec<Plugin>,
     pub network: Arc<Mutex<Option<network::System>>>,
     pub runtime: PythonRuntime,
 }
@@ -101,6 +98,32 @@ async fn may_run(
     Ok(())
 }
 
+fn create_plugin_log_file(plugin_id: &str, log_dir: &Path) -> std::fs::File {
+    let log_path = log_dir.join("plugins");
+    fs::create_dir_all(&log_path).expect("Failed to create the plugins log directory");
+
+    let safe_id: String = plugin_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+
+    let log_path = log_path.join(format!("{safe_id}.log"));
+
+    OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .append(true)
+        .open(log_path)
+        .expect("Failed to create the plugins log file")
+}
+
 async fn execute_local_action(
     state: tauri::State<'_, AppData>,
     parameters: Option<serde_json::Value>,
@@ -118,7 +141,7 @@ async fn execute_local_action(
     let payload = RpcRequest::new(export.entrypoint, params, Some(RpcId::Number(1)));
     let entrypoint = export.entrypoint;
 
-    // TODO state shouldn't call execute_action, only the Plugin Change this
+    // TODO state shouldn't call execute_action, only the Plugin
     let response = state
         .runtime
         .execute_action(&plugin_dir, &payload)
@@ -249,15 +272,10 @@ fn toggle_window(window: &WebviewWindow) {
 
 /// Create and set up a logger backend for Env.
 /// A line should look like [2026-01-01 10:10:00] [DEBUG] [flux_lib] - A **really** important stuff.
-fn set_log(app_handle: &App) {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .expect("Failed to get the DataDir directory for Logging");
+fn set_log(log_dir: &Path) {
+    fs::create_dir_all(&log_dir).expect("Failed to create the log directory");
 
-    fs::create_dir_all(&app_dir).expect("Failed to create the log directory");
-
-    let log_file_path = app_dir.join("debug.log");
+    let log_file_path = log_dir.join("flux.log");
 
     fern::Dispatch::new()
         .format(|out, message, record| {
@@ -306,27 +324,36 @@ fn set_tray(app: &mut App) {
 }
 
 pub fn run() {
+    // Some stuff here should probably be delayed to later, like the plugins loadings
+    // I think it improves the UX so the user know that Flux is running, but it's loading the plugins
+    // and other necessary stuff, if something fails.
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .setup(move |app| {
-            set_log(&app);
+            let log_dir = app.path().app_log_dir()?;
+
+            set_log(&log_dir);
             set_tray(&mut app);
 
-            let handle = app.handle();
             let network = Arc::new(Mutex::new(None));
 
-            let data_dir = handle
+            let resource_dir = app
                 .path()
-                .data_dir()
-                .inspect_err(|e| error!("Failed to find the XDG_DATA_HOME path: {:?}", e))
-                .expect("Failed to find the XDG_DATA_HOME path");
+                .resource_dir()
+                .inspect_err(|e| error!("Failed to find the Resources path: {:?}", e))?;
 
-            let runtime = PythonRuntime::new(data_dir)
-                .inspect_err(|e| error!("Failed to find a Python Runtime. {:?}", e))
-                .unwrap();
+            let mut plugin_dir = app.path().app_local_data_dir()?;
+            plugin_dir.join("plugins");
+
+            let runtime = PythonRuntime::new(resource_dir, plugin_dir)
+                .inspect_err(|e| error!("Python Runtime Failed to Start. {:?}", e))?;
+
+            // TODO Start and Initialize all Plugins. For now if a plugin fails to load the software stops and don't initialize
+            // I just wanna implement smth quick here so i can get smth working since i've already refactored and changed a lot of things
+            // but later this must be changed so if a plugin fails to load, Flux may continue to work normally.
+            runtime.start_plugins();
 
             app.manage(AppData {
-                plugins: socket_map,
                 runtime: runtime,
                 network,
             });

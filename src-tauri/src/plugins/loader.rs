@@ -4,14 +4,58 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
-const MANIFEST_FILENAME: &str = "manifest.json";
-const PLUGIN_FOLDER: &str = "plugins";
-
 use crate::error::AppError;
 use crate::plugins::plugin::{Plugin, PluginDescription};
 
 use super::PluginManifest;
 
+const MANIFEST_FILENAME: &str = "manifest.json";
+
+///  Receives the plugin root folder (The folder that contains other plugins folder)
+pub(super) fn scan_directory_for_plugins(
+    plugin_folder_root: PathBuf,
+) -> Result<Vec<PluginDescription>, AppError> {
+    let entries = fs::read_dir(plugin_folder_root)?;
+
+    let plugins = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .filter_map(|path| {
+            let manifest_path = path.join(MANIFEST_FILENAME);
+
+            let content = match fs::read_to_string(&manifest_path) {
+                Ok(content) => content,
+                Err(e) => {
+                    warn!(
+                        "Failed to read manfiest file: '{}'\nReason: {}",
+                        manifest_path.display(),
+                        e
+                    );
+                    return None;
+                }
+            };
+
+            match serde_json::from_str::<PluginManifest>(&content) {
+                Ok(mut manifest) => {
+                    resolve_plugin_icon(&path, &mut manifest);
+
+                    Some(PluginDescription { manifest, path })
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to deserialize manifest file: '{}'\nReason: {}",
+                        manifest_path.display(),
+                        e
+                    );
+                    None
+                }
+            }
+        })
+        .collect();
+
+    Ok(plugins)
+}
 /// Resolve the Plugin icon if it has one.
 /// The expected behavior changes dependeing if it's a Local or Bridge Plugin
 ///
@@ -39,54 +83,6 @@ fn resolve_plugin_icon(plugin_dir: &Path, manifest: &mut PluginManifest) {
             manifest.icon = None;
         }
     }
-}
-
-// TODO I think this functions is mixing responsabilities, analyze it later.
-fn scan_directory_for_plugins(dir: &Path) -> Result<Vec<PluginDescriptor>, AppError> {
-    let entries = fs::read_dir(dir)?;
-
-    let plugins = entries
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .filter_map(|path| {
-            let manifest_path = path.join(MANIFEST_FILENAME);
-
-            let content = match fs::read_to_string(&manifest_path) {
-                Ok(content) => content,
-                Err(e) => {
-                    warn!(
-                        "Failed to read manfiest file: '{}'\nReason: {}",
-                        manifest_path.display(),
-                        e
-                    );
-                    return None;
-                }
-            };
-
-            match serde_json::from_str::<PluginManifest>(&content) {
-                Ok(mut manifest) => {
-                    resolve_plugin_icon(&path, &mut manifest);
-
-                    Some(PluginDescriptor {
-                        origin: PluginOrigin::Local,
-                        manifest,
-                        path: Some(path.to_string_lossy().to_string()),
-                    })
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to deserialize manifest file: '{}'\nReason: {}",
-                        manifest_path.display(),
-                        e
-                    );
-                    None
-                }
-            }
-        })
-        .collect();
-
-    Ok(plugins)
 }
 
 /// Returns the primary plugins directory inside app_data_dir, creating it if needed.

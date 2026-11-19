@@ -1,7 +1,7 @@
 # Plugin Manifest Specification
 
 ## Overview
-The plugin manifest (`manifest.json`) describes a plugin's metadata, identity, and the actions (`exports`) it exposes to the main application. This specification is language-agnostic, allowing both Python scripts and C# modules to register capabilities, UI parameters, and entry points in a uniform way.
+The plugin manifest (`manifest.json`) describes a plugin's metadata, identity, and the actions (`exports`) it exposes to the main application.
 
 ---
 
@@ -14,11 +14,9 @@ The plugin manifest (`manifest.json`) describes a plugin's metadata, identity, a
 - **`repository`** (`string`, optional): URL of the source code repository.
 - **`download_url`** (`string`, optional): Direct download link for updates. Clients may also send `downloadUrl`; the host normalizes to `download_url`.
 - **`icon`** (`string`, optional): A Path to your icon, or a HTTP/HTTPS URL.
-- **`id`** (`string`): Unique reverse-domain identifier (e.g., `"com.mike.excel-exporter"`).
+- **`id`** (`string`): Unique for your plugin. Don't use any path separator here like '/' our '\'.
 - **`tags`** (`array` of `string`): What category your plugin is in. May be anything.
 - **`exports`** (`array` of objects): List of actions/functions provided by the plugin.
-
-Local vs Bridge (TCP / external CAD) is **not** part of the manifest. The host attaches `origin` when listing plugins.
 
 ---
 
@@ -65,10 +63,10 @@ A estrutura geral vai paracer o que está abaixo
     "method": "say_hi",
     "params": {
         "network": { See the "network-v1.json" for more detail },
-        "parameters": { "say_hi" parameters }
+        "parameters": { "name": "Bob", "age": 13 }
     }
 }
 ```
 
-## Local Plugins Specific
-When searching for your script python, it'll always search for the main.py that should be placed in the directory that manifest.json.
+>[!NOTE]
+>When searching for your script python, it'll always search for the main.py that should be placed in the directory that manifest.json.

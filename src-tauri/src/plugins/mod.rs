@@ -81,22 +81,26 @@ pub mod plugin {
     use std::{
         io::{BufRead, BufReader, Write},
         path::{Path, PathBuf},
-        process::{Command, Stdio},
-        sync::mpsc::{self, Sender},
+        process::{ChildStdout, Command, Stdio},
+        sync::mpsc::{self, Receiver, Sender},
         thread,
     };
 
-    use crate::{error::AppError, plugins::loader::discover_local_plugins};
+    use crate::{
+        error::AppError,
+        plugins::{loader::discover_local_plugins, rpc::RpcError},
+    };
 
     use super::*;
 
     pub struct Plugin {
-        pub description: PluginDescription,
+        description: PluginDescription,
         handle: PluginHandle,
     }
 
     struct PluginHandle {
         stdin_sender: Sender<RpcRequest>,
+        stdou_receiver: Receiver<RpcResponse>,
         thread_handle: thread::JoinHandle<()>,
     }
 
@@ -106,22 +110,26 @@ pub mod plugin {
     }
 
     impl Plugin {
-        /// Inicializa o processo do plugin e suas threads de I/O (stdin / stdout)
+        /// This function is meant to create a file that stores all erros that this plugin may have printed using stderr.
+
+        ///  This Function is meant to start a plugin at the first time.
         pub fn start(
             description: PluginDescription,
             runtime: &PythonRuntime,
+            log_dir: &Path,
         ) -> Result<Self, AppError> {
-            let (tx, rx) = mpsc::channel::<RpcRequest>();
+            let (tx_req, rx_req) = mpsc::channel::<RpcRequest>();
+            let (tx_res, rx_res) = mpsc::channel::<RpcResponse>();
 
             let path = description.path.clone();
-            let base_cmd = runtime.base_command(&path);
+            let mut base_cmd = runtime.base_command(path);
 
             let thread_handle = thread::spawn(move || {
                 let mut child = base_cmd
                     .arg(&path)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
+                    .stderr(Stdio::null())
                     .spawn()
                     .expect("Failed to execute Child Plugin");
 
@@ -131,19 +139,25 @@ pub mod plugin {
                 // Sub-thread opcional para ler o stdout do Python sem bloquear a escrita
                 let _stdout_thread = thread::spawn(move || {
                     let reader = BufReader::new(stdout);
-                    for line in reader.lines() {
-                        if let Ok(response_str) = line {
-                            // TODO: Aqui você faria o parse da string para RpcResponse
-                            // e despacharia para o canal global do Tauri/Core se necessário.
-                            println!("[Plugin Stdout]: {}", response_str);
-                        } else {
-                            break;
+                    let stream =
+                        serde_json::Deserializer::from_reader(reader).into_iter::<RpcResponse>();
+
+                    for item in stream {
+                        match item {
+                            Ok(response) => {
+                                if tx_res.send(response).is_err() {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                eprintln!("Not a valid payload from plugin. {err}");
+                            }
                         }
                     }
                 });
 
                 // Loop principal da thread: aguarda requisições RPC para enviar ao stdin do processo
-                while let Ok(request) = rx.recv() {
+                while let Ok(request) = rx_req.recv() {
                     if let Ok(json_string) = serde_json::to_string(&request) {
                         if let Err(e) = writeln!(stdin, "{}", json_string) {
                             eprintln!("Erro ao escrever no stdin do plugin: {}", e);
@@ -161,7 +175,8 @@ pub mod plugin {
             Ok(Self {
                 description,
                 handle: PluginHandle {
-                    stdin_sender: tx,
+                    stdin_sender: tx_req,
+                    stdou_receiver: rx_res,
                     thread_handle,
                 },
             })
@@ -175,26 +190,5 @@ pub mod plugin {
                 .map_err(|_| PluginError::ChannelClosed)?;
             Ok(())
         }
-    }
-
-    /// Descobre e inicializa todos os plugins locais encontrados no diretório
-    pub fn start_plugins(local_data_dir: &Path) -> Result<Vec<Plugin>, AppError> {
-        let plugin_descriptions: Vec<PluginDescription> = discover_local_plugins(local_data_dir)?;
-        let mut loaded_plugins = Vec::new();
-
-        // Exemplo de runtime mockado ou injetado (ajuste conforme a sua struct PythonRuntime)
-        let runtime = PythonRuntime::default();
-
-        for desc in plugin_descriptions {
-            match Plugin::start(desc, &runtime) {
-                Ok(plugin) => loaded_plugins.push(plugin),
-                Err(e) => {
-                    eprintln!("Falha ao carregar plugin: {:?}", e);
-                    // Como especificado: um plugin falhar não derruba os outros
-                }
-            }
-        }
-
-        Ok(loaded_plugins)
     }
 }

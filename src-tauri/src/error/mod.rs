@@ -92,4 +92,7 @@ pub enum PythonRuntimeError {
 
     #[error("Process I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Couldn't find a valid Python Executable.")]
+    PythonExecutableNotFound,
 }

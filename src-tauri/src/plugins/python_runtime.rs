@@ -1,8 +1,13 @@
-use crate::error::{JsonRpcError, PluginError};
+use log::warn;
+
+use crate::error::{AppError, JsonRpcError, PluginError};
+use crate::plugins::loader::scan_directory_for_plugins;
+use crate::plugins::plugin::Plugin;
+use crate::plugins::PluginManifest;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::Duration;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 use crate::error::PythonRuntimeError::{self};
 use crate::plugins::rpc::{RpcRequest, RpcResponse};
@@ -11,10 +16,12 @@ const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
 const PYTHON_MAIN_FILE: &str = "main.py";
 
 pub struct PythonRuntime {
-    pub path: PathBuf,
+    python_path: PathBuf,
+    plugin_folder_root: PathBuf,
+    plugins: Vec<Plugin>,
 }
 
-fn resolve_python_executable(resource_dir: &Path) -> Result<PathBuf, PythonRuntimeError> {
+fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRuntimeError> {
     if cfg!(debug_assertions) {
         let output = if cfg!(target_os = "windows") {
             std::process::Command::new("where.exe")
@@ -58,28 +65,33 @@ fn resolve_python_executable(resource_dir: &Path) -> Result<PathBuf, PythonRunti
             }
         }
     }
-    Err(PythonRuntimeError::NoPythonExecutableFound)
+    Err(PythonRuntimeError::PythonExecutableNotFound)
 }
 
 impl PythonRuntime {
-    pub fn new(bundle_directory: &Path) -> Result<Self, PythonRuntimeError> {
-        let path = resolve_python_executable(bundle_directory)?;
+    pub fn new(
+        python_path: PathBuf,
+        plugin_folder_root: PathBuf,
+    ) -> Result<Self, PythonRuntimeError> {
+        let python_path = resolve_python_executable(python_path)?;
+        let plugins = Vec::new();
 
-        Ok(Self { path })
+        Ok(Self {
+            python_path,
+            plugin_folder_root,
+            plugins,
+        })
     }
 
-    pub fn start_plugin(&self, plugin_dir: &Path, method: &str) {
-        let command = self.base_command(plugin_dir);
+    /// Essa função é responsável por ir atrás de cada plugins e guarda-los na memória
+    pub fn load_plugins(&self) {
+        let found_plugins =
+            scan_directory_for_plugins(self.plugin_folder_root.clone()).expect("FIX IT");
 
-        let main_file = plugin_dir
-            .join(PYTHON_MAIN_FILE)
-            .to_string_lossy()
-            .to_string();
-
-        command.arg(main_file)
+        todo!()
     }
 
-    pub fn base_command(&self, plugin_dir: &Path) -> Command {
+    fn base_command(&self, plugin_dir: &Path) -> Command {
         let mut cmd = Command::new(&self.path);
 
         cmd.arg("-c")
@@ -120,14 +132,14 @@ impl PythonRuntime {
         let script_file = plugin_dir.join(PYTHON_MAIN_FILE);
 
         if !script_file.is_file() {
-            return Err(PythonRuntimeError::MainFileNotFound);
+            return Err(PythonRuntimeError::Plugin(PluginError::MainFileNotFound));
         }
 
         let payload_str = serde_json::to_string(payload).expect("This shouldn't fail");
 
         let cmd = self
             .base_command(plugin_dir)
-            .arg(script_file.to_string_lossy().to_string())
+            .arg(script_file.to_string_lossy().to_string());
 
         let mut child = cmd.spawn()?;
 
@@ -145,7 +157,7 @@ impl PythonRuntime {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
-            return Err(PythonRuntimeError::PluginError(PluginError::InternalError(
+            return Err(PythonRuntimeError::Plugin(PluginError::InternalError(
                 stderr,
             )));
         }

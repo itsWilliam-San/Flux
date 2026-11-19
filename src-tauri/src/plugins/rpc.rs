@@ -4,7 +4,6 @@ use crate::{
     JsonRpcError::{self, NotValidRPCParams},
 };
 use serde::{Deserialize, Serialize};
-use tokio::io::TcpStream;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(untagged)]
