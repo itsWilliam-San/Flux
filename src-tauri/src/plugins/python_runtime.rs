@@ -1,10 +1,6 @@
-use log::warn;
-
-use crate::error::{AppError, JsonRpcError, PluginError};
-use crate::plugins::loader::scan_directory_for_plugins;
-use crate::plugins::plugin::Plugin;
-use crate::plugins::PluginManifest;
-use std::fs;
+use crate::error::{JsonRpcError, PluginError};
+use crate::plugins::loader::find_plugins;
+use crate::plugins::plugin::{Plugin, PluginDescription};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
@@ -69,6 +65,12 @@ fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRun
 }
 
 impl PythonRuntime {
+    pub fn get_user_plugins_dir(&self) -> &Path {
+        let plugin_folder = &self.plugin_folder_root;
+
+        plugin_folder
+    }
+
     pub fn new(
         python_path: PathBuf,
         plugin_folder_root: PathBuf,
@@ -84,18 +86,27 @@ impl PythonRuntime {
     }
 
     /// Essa função é responsável por ir atrás de cada plugins e guarda-los na memória
-    pub fn load_plugins(&self) {
-        let found_plugins =
-            scan_directory_for_plugins(self.plugin_folder_root.clone()).expect("FIX IT");
+    pub fn load_plugins(&mut self) {
+        let found_plugins = find_plugins(self.plugin_folder_root.clone()).expect("FIX IT");
 
-        todo!()
+        self.start_plugins(&found_plugins);
     }
 
-    fn base_command(&self, plugin_dir: &Path) -> Command {
-        let mut cmd = Command::new(&self.path);
+    fn start_plugins(&mut self, plugins: &[PluginDescription]) {
+        let mut started: Vec<Plugin> = Vec::with_capacity(plugins.len());
+
+        for plugin in plugins {
+            let mut cmd = self.base_command(&plugin.path);
+        }
+
+        self.plugins = started;
+    }
+
+    fn base_command(&self, workind_dir: &Path) -> Command {
+        let mut cmd = Command::new(&self.python_path);
 
         cmd.arg("-c")
-            .current_dir(plugin_dir)
+            .current_dir(workind_dir)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -111,7 +122,7 @@ impl PythonRuntime {
 
         #[cfg(debug_assertions)]
         {
-            if let Some(parent) = self.path.parent() {
+            if let Some(parent) = self.python_path.parent() {
                 if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
                     if let Some(root) = parent.parent() {
                         cmd.env("PYTHONHOME", root.to_string_lossy().to_string());

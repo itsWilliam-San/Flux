@@ -1,8 +1,4 @@
-use crate::{
-    error::TransportError,
-    network::System,
-    JsonRpcError::{self, NotValidRPCParams},
-};
+use crate::error::TransportError;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -20,13 +16,15 @@ pub enum RpcParams {
     ByPosition(Vec<serde_json::Value>),
 }
 
-impl RpcParams {
-    pub fn new(params: serde_json::Map<String, serde_json::Value>) -> Self {
-        RpcParams::ByName(params)
+impl From<serde_json::Map<String, serde_json::Value>> for RpcParams {
+    fn from(value: serde_json::Map<String, serde_json::Value>) -> Self {
+        Self::ByName(value)
     }
+}
 
-    pub fn new(params: Vec<serde_json::Value>) -> Self {
-        RpcParams::ByPosition(params)
+impl From<Vec<serde_json::Value>> for RpcParams {
+    fn from(value: Vec<serde_json::Value>) -> Self {
+        Self::ByPosition(value)
     }
 }
 
@@ -86,20 +84,6 @@ impl RpcRequest {
             jsonrpc: String::from("2.0"),
             method,
             params,
-            id,
-        }
-    }
-
-    pub fn new(
-        method: String,
-        params: serde_json::Map<String, serde_json::Value>,
-        id: Option<RpcId>,
-    ) -> RpcRequest {
-        let my_params = Some(RpcParams::ByName(params));
-        RpcRequest {
-            jsonrpc: String::from("2.0"),
-            method,
-            params: my_params,
             id,
         }
     }

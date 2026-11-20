@@ -1,10 +1,10 @@
 use crate::network::System;
+use crate::plugins::plugin::PluginDescription;
 use crate::plugins::python_runtime::PythonRuntime;
-use log::{debug, error, info, warn};
+use log::{error, warn};
 use std::fs::{self, OpenOptions};
 use std::path::Path;
-use std::{collections::HashMap, sync::Arc};
-use tauri::path::BaseDirectory;
+use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -16,7 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::error::{JsonRpcError, PluginError};
 use crate::plugins::rpc::{RpcId, RpcParams, RpcRequest, RpcResponse};
-use crate::plugins::{PluginDescriptor, PluginExport, PluginManifest};
+use crate::plugins::PluginExport;
 
 pub struct AppData {
     pub network: Arc<Mutex<Option<network::System>>>,
@@ -48,11 +48,8 @@ fn try_to_response(buffer: &Vec<u8>, n: usize) -> Result<RpcResponse, JsonRpcErr
 }
 
 #[tauri::command]
-async fn list_plugins(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppData>,
-) -> Result<Vec<Plugin>, String> {
-    Ok(state.plugins)
+fn list_plugins(app: tauri::AppHandle, state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
+    todo!()
 }
 
 async fn set_plugin_parameters(

@@ -79,17 +79,16 @@ pub struct ActionExecutionPayload {
 
 pub mod plugin {
     use std::{
-        io::{BufRead, BufReader, Write},
+        io::{BufReader, Write},
         path::{Path, PathBuf},
-        process::{ChildStdout, Command, Stdio},
+        process::{Command, Stdio},
         sync::mpsc::{self, Receiver, Sender},
         thread,
     };
 
-    use crate::{
-        error::AppError,
-        plugins::{loader::discover_local_plugins, rpc::RpcError},
-    };
+    use log::warn;
+
+    use crate::error::AppError;
 
     use super::*;
 
@@ -109,23 +108,46 @@ pub mod plugin {
         pub path: PathBuf,
     }
 
-    impl Plugin {
-        /// This function is meant to create a file that stores all erros that this plugin may have printed using stderr.
+    impl PluginDescription {
+        fn resolve_plugin_icon(&mut self) {
+            if let Some(ref icon_val) = self.manifest.icon {
+                if icon_val.starts_with("http://") || icon_val.starts_with("https://") {
+                    return;
+                }
 
+                let icon_path = self.path.join(icon_val);
+                if icon_path.is_file() {
+                    let absolute_path_str = icon_path.to_string_lossy();
+
+                    self.manifest.icon = Some(format!("asset://{}", absolute_path_str))
+                } else {
+                    warn!(
+                        "Plugin {} describes an icon, but it's neither a HTTP/HTTPS nor a valid file path.\nManifest.icon: {}",
+                        self.manifest.name,
+                        icon_val
+                    );
+
+                    // Remove it for safety
+                    self.manifest.icon = None;
+                }
+            }
+        }
+    }
+
+    impl Plugin {
         ///  This Function is meant to start a plugin at the first time.
         pub fn start(
             description: PluginDescription,
-            runtime: &PythonRuntime,
+            mut command: Command,
             log_dir: &Path,
         ) -> Result<Self, AppError> {
             let (tx_req, rx_req) = mpsc::channel::<RpcRequest>();
             let (tx_res, rx_res) = mpsc::channel::<RpcResponse>();
 
             let path = description.path.clone();
-            let mut base_cmd = runtime.base_command(path);
 
             let thread_handle = thread::spawn(move || {
-                let mut child = base_cmd
+                let mut child = command
                     .arg(&path)
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
