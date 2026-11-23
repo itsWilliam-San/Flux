@@ -41,6 +41,9 @@ pub enum JsonRpcError {
 /// Handles structural validation of the plugin directory (files and manifests).
 #[derive(Error, Debug)]
 pub enum PluginError {
+    #[error("Failed to execute an action because the plugin hasn't been started yet.")]
+    PluginNotStarted,
+
     #[error("Handshake error: {0}")]
     Handshake(#[from] TransportError),
 

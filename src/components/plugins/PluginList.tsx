@@ -84,7 +84,7 @@ export default function PluginList({
     }, [plugins]);
 
     return (
-        <aside className="flex h-full w-[280px] shrink-0 flex-col gap-3 overflow-hidden border-r border-border p-4 bg-muted/10">
+        <aside className="flex h-full w-70 shrink-0 flex-col gap-3 overflow-hidden border-r border-border p-4 bg-muted/10">
             {showSettingsButton && onOpenSettings ? (
                 <div className="flex items-center justify-between pb-1 border-b border-border">
                     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">

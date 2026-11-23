@@ -85,7 +85,7 @@ pub mod plugin {
 
     use log::warn;
 
-    use crate::error::AppError;
+    use crate::error::{AppError, PluginError};
 
     use super::*;
 
@@ -106,7 +106,7 @@ pub mod plugin {
         }
     }
 
-    #[derive(Clone)]
+    #[derive(Serialize, Deserialize, Clone)]
     pub struct PluginDescription {
         pub manifest: PluginManifest,
         pub path: PathBuf,
@@ -196,9 +196,18 @@ pub mod plugin {
 
             self.handle = Some(PluginHandle {
                 stdin_sender: tx_req,
-                stdou_receiver: rx_res,
+                stdou_receiver: Mutex::new(rx_res),
                 thread_handle,
             });
+
+            Ok(())
+        }
+
+        pub fn send_request(&self, request: RpcRequest) -> Result<(), PluginError> {
+            self.handle
+                .as_ref()
+                .and_then(|handle| Some(handle.send_rpc(request)))
+                .ok_or(PluginError::PluginNotStarted)?;
 
             Ok(())
         }

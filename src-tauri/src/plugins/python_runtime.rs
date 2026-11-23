@@ -2,6 +2,7 @@ use log::warn;
 
 use crate::plugins::loader::find_plugins;
 use crate::plugins::plugin::{Plugin, PluginDescription};
+use crate::plugins::rpc::RpcRequest;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -92,6 +93,21 @@ impl PythonRuntime {
         })
     }
 
+    pub fn execute_plugin_action(
+        &self,
+        plugin_id: &str,
+        payload: RpcRequest,
+    ) -> Result<(), PythonRuntimeError> {
+        let plugin = self
+            .plugins
+            .get(plugin_id)
+            .ok_or(PythonRuntimeError::PluginNotFound(plugin_id.to_owned()))?;
+
+        plugin.send_request(payload)?;
+
+        todo!()
+    }
+
     pub fn load_plugins(&mut self) {
         let found_plugins = find_plugins(self.plugin_folder_root.clone()).expect("FIX IT");
 
@@ -114,6 +130,10 @@ impl PythonRuntime {
                 );
             });
         }
+    }
+
+    pub fn get_plugin_response(&self, id: &str) -> _ {
+        todo!()
     }
 }
 

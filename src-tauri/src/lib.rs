@@ -122,6 +122,7 @@ fn create_plugin_log_file(plugin_id: &str, log_dir: &Path) -> std::fs::File {
 }
 
 async fn execute_local_action(
+    app: tauri::App,
     state: tauri::State<'_, AppData>,
     parameters: Option<serde_json::Value>,
     export: &PluginExport,
@@ -138,25 +139,27 @@ async fn execute_local_action(
     let payload = RpcRequest::new(export.entrypoint, params, Some(RpcId::Number(1)));
     let entrypoint = export.entrypoint;
 
-    let result = state.runtime.execute_action(&export.id, &payload);
+    state.runtime.execute_plugin_action(&export.id, payload)?;
+
+    let result = state.runtime.get_plugin_response(&export.id);
 
     let result = match response {
-        RpcResponse::Error { error, .. } => serde_json::Value::from(RpcError),
+        RpcResponse::Error { error, .. } => Ok(error),
         RpcResponse::Success { result, .. } => {
             let system = serde_json::from_value(result)
-                .map_err(|e| InternalPluginError::IncorrectNetworkData(e.to_string()))?;
+                .map_err(|e| PluginError::IncorrectNetworkData(e.to_string()))?;
 
             if is_exporter {
                 state.update_network_data(system).await;
                 let _ = app.emit(NETWORK_UPDATE_EVENT, true);
             }
 
-            serde_json::Value::Null
+            Ok(result)
         }
-        RpcResponse::Notification => serde_json::Value::Null,
+        RpcResponse::Notification => Ok(serde_json::Value::Null),
     };
 
-    Ok(result)
+    result
 }
 
 /// plugin_id = Identification of that plugin as written in its manifest
