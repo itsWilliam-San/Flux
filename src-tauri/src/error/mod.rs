@@ -38,7 +38,7 @@ pub enum JsonRpcError {
     BridgeConnectionClosed,
 }
 
-/// Handles structural validation of the plugin directory (files and manifests).
+/// Errors relating to individual plugin operations.
 #[derive(Error, Debug)]
 pub enum PluginError {
     #[error("Failed to execute an action because the plugin hasn't been started yet.")]
@@ -59,7 +59,7 @@ pub enum PluginError {
     #[error("The 'value' data is not a valid network data object: {0}")]
     NotANetworkData(String),
 
-    #[error("Internal error while executing Python script: {0}")]
+    #[error("Internal error while executing plugin: {0}")]
     InternalError(String),
 
     #[error("The received network data is not in the correct format: {0}")]

@@ -36,30 +36,28 @@ pub struct RpcError {
     pub data: Option<serde_json::Value>,
 }
 
-impl RpcResponse {
-    pub fn new(payload: &Vec<u8>) -> Result<RpcResponse, TransportError> {
-        let rpc_response: RpcResponse = serde_json::from_slice(payload)?;
-
-        Ok(rpc_response)
-    }
-}
-
-#[derive(Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum RpcResponse {
-    Success {
-        jsonrpc: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        id: Option<RpcId>,
-        result: serde_json::Value,
-    },
     Error {
         jsonrpc: String,
-        #[serde(skip_serializing_if = "Option::is_none")]
         id: Option<RpcId>,
         error: RpcError,
     },
+    Success {
+        jsonrpc: String,
+        id: Option<RpcId>,
+        result: serde_json::Value,
+    },
+    // A response with no id and no result/error field — treated as a no-op notification.
     Notification,
+}
+
+impl RpcResponse {
+    pub fn from_bytes(payload: &[u8]) -> Result<RpcResponse, TransportError> {
+        let rpc_response: RpcResponse = serde_json::from_slice(payload)?;
+        Ok(rpc_response)
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

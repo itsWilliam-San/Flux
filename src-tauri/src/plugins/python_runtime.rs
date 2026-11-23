@@ -1,22 +1,28 @@
 use log::warn;
 
+use crate::error::PythonRuntimeError;
 use crate::plugins::loader::find_plugins;
 use crate::plugins::plugin::{Plugin, PluginDescription};
-use crate::plugins::rpc::RpcRequest;
+use crate::plugins::rpc::{RpcRequest, RpcResponse};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-
-use crate::error::PythonRuntimeError::{self};
+use std::sync::Mutex;
 
 const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
-const PYTHON_MAIN_FILE: &str = "main.py";
 
+/// Wrapping the HashMap in a std::sync::Mutex makes PythonRuntime Send + Sync,
+/// which is required for Tauri's managed AppData state.
 pub struct PythonRuntime {
     python_path: PathBuf,
     pub plugin_folder_root: PathBuf,
-    plugins: HashMap<String, Plugin>,
+    plugins: Mutex<HashMap<String, Plugin>>,
 }
+
+// SAFETY: PythonRuntime is only mutated (load_plugins / start_plugins) during
+// single-threaded setup before Tauri registers it. After that, all access goes
+// through the inner Mutex, making concurrent reads safe.
+unsafe impl Send for PythonRuntime {}
+unsafe impl Sync for PythonRuntime {}
 
 fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRuntimeError> {
     if cfg!(debug_assertions) {
@@ -38,13 +44,11 @@ fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRun
             }
         }
     } else {
-        //  bundled resource directory
         let dir = resource_dir.join(PYTHON_RUNTIME_FOLDER);
 
         if cfg!(target_os = "windows") {
             let win_bin1 = dir.join("python.exe");
             let win_bin2 = dir.join("Scripts").join("python.exe");
-
             if win_bin1.is_file() {
                 return Ok(win_bin1);
             }
@@ -66,104 +70,79 @@ fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRun
 }
 
 impl PythonRuntime {
-    pub fn get_user_plugins_dir(&self) -> &Path {
-        let plugin_folder = &self.plugin_folder_root;
+    pub fn get_plugin(&self, plugin_id: &str) -> Option<PluginDescription> {
+        let plugins = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
 
-        plugin_folder
-    }
-
-    pub fn get_plugins(&self) -> Vec<PluginDescription> {
-        self.plugins
-            .iter()
-            .map(|(_, plugin)| plugin.description.clone())
-            .collect()
+        plugins
+            .get(plugin_id)
+            .map(|plugin| plugin.description.clone())
     }
 
     pub fn new(
-        python_path: PathBuf,
+        resource_dir: PathBuf,
         plugin_folder_root: PathBuf,
     ) -> Result<Self, PythonRuntimeError> {
-        let python_path = resolve_python_executable(python_path)?;
-        let plugins = HashMap::new();
-
+        let python_path = resolve_python_executable(resource_dir)?;
         Ok(Self {
             python_path,
             plugin_folder_root,
-            plugins,
+            plugins: Mutex::new(HashMap::new()),
         })
     }
 
-    pub fn execute_plugin_action(
-        &self,
-        plugin_id: &str,
-        payload: RpcRequest,
-    ) -> Result<(), PythonRuntimeError> {
-        let plugin = self
-            .plugins
-            .get(plugin_id)
-            .ok_or(PythonRuntimeError::PluginNotFound(plugin_id.to_owned()))?;
-
-        plugin.send_request(payload)?;
-
-        todo!()
+    /// Returns a snapshot of all loaded plugin descriptions for the frontend.
+    pub fn get_plugins(&self) -> Vec<PluginDescription> {
+        self.plugins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .map(|plugin| plugin.description.clone())
+            .collect()
     }
 
+    /// Discover plugins on disk and register them (not yet started).
     pub fn load_plugins(&mut self) {
-        let found_plugins = find_plugins(self.plugin_folder_root.clone()).expect("FIX IT");
-
-        for plugin in found_plugins {
-            self.plugins
-                .insert(plugin.manifest.id.clone(), Plugin::new(plugin));
+        match find_plugins(self.plugin_folder_root.clone()) {
+            Ok(found) => {
+                let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+                for plugin in found {
+                    let id = plugin.manifest.id.clone();
+                    guard.entry(id).or_insert_with(|| Plugin::new(plugin));
+                }
+            }
+            Err(e) => {
+                warn!("Failed to scan plugins directory: {e}");
+            }
         }
     }
 
+    /// Start all loaded plugins (spawn their processes).
     pub fn start_plugins(&mut self, log_dir: &Path) {
-        let python_path = &self.python_path;
-
-        for (plugin_id, plugin) in &mut self.plugins {
-            let cmd = base_command(python_path);
-            let _ = plugin.start(cmd, log_dir).inspect_err(|err| {
+        let python_path = self.python_path.clone();
+        let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+        for (plugin_id, plugin) in guard.iter_mut() {
+            let _ = plugin.start(&python_path, log_dir).inspect_err(|err| {
                 warn!(
-                    "Failed to initialize plugin {}. Reason: {}",
-                    plugin_id,
-                    err.to_string()
+                    "Failed to initialize plugin '{}'. Reason: {}",
+                    plugin_id, err
                 );
             });
         }
     }
 
-    pub fn get_plugin_response(&self, id: &str) -> _ {
-        todo!()
+    /// Send an RPC request to a running plugin and wait for its response.
+    pub fn execute_plugin_action(
+        &self,
+        plugin_id: &str,
+        payload: RpcRequest,
+    ) -> Result<RpcResponse, PythonRuntimeError> {
+        let guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+        let plugin = guard
+            .get(plugin_id)
+            .ok_or_else(|| PythonRuntimeError::PluginNotFound(plugin_id.to_owned()))?;
+
+        plugin
+            .send_request(payload)
+            .map_err(PythonRuntimeError::Plugin)
     }
-}
-
-fn base_command(python_path: &Path) -> Command {
-    let mut cmd = Command::new(python_path);
-
-    cmd.arg("-c")
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .env("PYTHONUNBUFFERED", "1")
-        .env("PYTHONNOUSERSITE", "1");
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x08000000;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
-
-    #[cfg(debug_assertions)]
-    {
-        if let Some(parent) = python_path.parent() {
-            if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
-                if let Some(root) = parent.parent() {
-                    cmd.env("PYTHONHOME", root.to_string_lossy().to_string());
-                }
-            }
-        }
-    }
-
-    cmd
 }
