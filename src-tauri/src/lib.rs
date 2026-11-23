@@ -48,8 +48,8 @@ fn try_to_response(buffer: &Vec<u8>, n: usize) -> Result<RpcResponse, JsonRpcErr
 }
 
 #[tauri::command]
-fn list_plugins(app: tauri::AppHandle, state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
-    todo!()
+fn list_plugins(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
+    state.runtime.get_plugins()
 }
 
 async fn set_plugin_parameters(
@@ -74,7 +74,7 @@ async fn set_plugin_parameters(
         }
     };
 
-    RpcParams::new(params_map)
+    params_map.into()
 }
 
 /// Check if the action requires any prior data (Like the Network Data)
@@ -138,12 +138,7 @@ async fn execute_local_action(
     let payload = RpcRequest::new(export.entrypoint, params, Some(RpcId::Number(1)));
     let entrypoint = export.entrypoint;
 
-    // TODO state shouldn't call execute_action, only the Plugin
-    let response = state
-        .runtime
-        .execute_action(&plugin_dir, &payload)
-        .await
-        .map_err(|e| e.to_string());
+    let result = state.runtime.execute_action(&export.id, &payload);
 
     let result = match response {
         RpcResponse::Error { error, .. } => serde_json::Value::from(RpcError),
@@ -249,12 +244,12 @@ async fn exit_app(app: tauri::AppHandle) {
 }
 
 #[tauri::command]
-fn get_plugins_folder(app: tauri::AppHandle) -> Result<String, String> {
-    let result = plugins::loader::get_user_plugins_dir(&app)
-        .map(|p| p.to_string_lossy().to_string())
-        .map_err(|e| e.to_string());
-
-    result
+fn get_plugins_folder(state: tauri::State<'_, AppData>) -> String {
+    state
+        .runtime
+        .plugin_folder_root
+        .to_string_lossy()
+        .to_string()
 }
 
 fn toggle_window(window: &WebviewWindow) {
@@ -345,15 +340,9 @@ pub fn run() {
             let runtime = PythonRuntime::new(resource_dir, plugin_dir)
                 .inspect_err(|e| error!("Python Runtime Failed to Start. {:?}", e))?;
 
-            // TODO Start and Initialize all Plugins. For now if a plugin fails to load the software stops and don't initialize
-            // I just wanna implement smth quick here so i can get smth working since i've already refactored and changed a lot of things
-            // but later this must be changed so if a plugin fails to load, Flux may continue to work normally.
-            runtime.start_plugins();
+            runtime.load_plugins();
 
-            app.manage(AppData {
-                runtime: runtime,
-                network,
-            });
+            app.manage(AppData { runtime, network });
 
             Ok(())
         })

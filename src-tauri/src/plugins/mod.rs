@@ -4,13 +4,7 @@ pub mod rpc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    error::PluginError,
-    plugins::{
-        python_runtime::PythonRuntime,
-        rpc::{RpcRequest, RpcResponse},
-    },
-};
+use crate::plugins::rpc::{RpcRequest, RpcResponse};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct PluginManifest {
@@ -82,7 +76,10 @@ pub mod plugin {
         io::{BufReader, Write},
         path::{Path, PathBuf},
         process::{Command, Stdio},
-        sync::mpsc::{self, Receiver, Sender},
+        sync::{
+            mpsc::{self, Receiver, Sender},
+            Mutex,
+        },
         thread,
     };
 
@@ -93,16 +90,23 @@ pub mod plugin {
     use super::*;
 
     pub struct Plugin {
-        description: PluginDescription,
-        handle: PluginHandle,
+        pub description: PluginDescription,
+        handle: Option<PluginHandle>, // This is done so a plugin may be loaded but not running
     }
 
     struct PluginHandle {
         stdin_sender: Sender<RpcRequest>,
-        stdou_receiver: Receiver<RpcResponse>,
+        stdou_receiver: Mutex<Receiver<RpcResponse>>,
         thread_handle: thread::JoinHandle<()>,
     }
 
+    impl PluginHandle {
+        pub fn send_rpc(&self, payload: RpcRequest) {
+            self.stdin_sender.send(payload);
+        }
+    }
+
+    #[derive(Clone)]
     pub struct PluginDescription {
         pub manifest: PluginManifest,
         pub path: PathBuf,
@@ -136,15 +140,11 @@ pub mod plugin {
 
     impl Plugin {
         ///  This Function is meant to start a plugin at the first time.
-        pub fn start(
-            description: PluginDescription,
-            mut command: Command,
-            log_dir: &Path,
-        ) -> Result<Self, AppError> {
+        pub fn start(&mut self, mut command: Command, log_dir: &Path) -> Result<(), AppError> {
             let (tx_req, rx_req) = mpsc::channel::<RpcRequest>();
             let (tx_res, rx_res) = mpsc::channel::<RpcResponse>();
 
-            let path = description.path.clone();
+            let path = self.description.path.clone();
 
             let thread_handle = thread::spawn(move || {
                 let mut child = command
@@ -194,23 +194,20 @@ pub mod plugin {
                 }
             });
 
-            Ok(Self {
-                description,
-                handle: PluginHandle {
-                    stdin_sender: tx_req,
-                    stdou_receiver: rx_res,
-                    thread_handle,
-                },
-            })
+            self.handle = Some(PluginHandle {
+                stdin_sender: tx_req,
+                stdou_receiver: rx_res,
+                thread_handle,
+            });
+
+            Ok(())
         }
 
-        /// Envia uma requisição RPC para o plugin de forma assíncrona/não-bloqueante via canal
-        pub fn send_rpc(&self, payload: RpcRequest) -> Result<(), PluginError> {
-            self.handle
-                .stdin_sender
-                .send(payload)
-                .map_err(|_| PluginError::ChannelClosed)?;
-            Ok(())
+        pub fn new(pd: PluginDescription) -> Self {
+            Self {
+                description: pd,
+                handle: None,
+            }
         }
     }
 }

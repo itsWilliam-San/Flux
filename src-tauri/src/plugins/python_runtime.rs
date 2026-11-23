@@ -1,20 +1,20 @@
-use crate::error::{JsonRpcError, PluginError};
+use log::warn;
+
 use crate::plugins::loader::find_plugins;
 use crate::plugins::plugin::{Plugin, PluginDescription};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::Duration;
 
 use crate::error::PythonRuntimeError::{self};
-use crate::plugins::rpc::{RpcRequest, RpcResponse};
 
 const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
 const PYTHON_MAIN_FILE: &str = "main.py";
 
 pub struct PythonRuntime {
     python_path: PathBuf,
-    plugin_folder_root: PathBuf,
-    plugins: Vec<Plugin>,
+    pub plugin_folder_root: PathBuf,
+    plugins: HashMap<String, Plugin>,
 }
 
 fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRuntimeError> {
@@ -71,12 +71,19 @@ impl PythonRuntime {
         plugin_folder
     }
 
+    pub fn get_plugins(&self) -> Vec<PluginDescription> {
+        self.plugins
+            .iter()
+            .map(|(_, plugin)| plugin.description.clone())
+            .collect()
+    }
+
     pub fn new(
         python_path: PathBuf,
         plugin_folder_root: PathBuf,
     ) -> Result<Self, PythonRuntimeError> {
         let python_path = resolve_python_executable(python_path)?;
-        let plugins = Vec::new();
+        let plugins = HashMap::new();
 
         Ok(Self {
             python_path,
@@ -85,101 +92,58 @@ impl PythonRuntime {
         })
     }
 
-    /// Essa função é responsável por ir atrás de cada plugins e guarda-los na memória
     pub fn load_plugins(&mut self) {
         let found_plugins = find_plugins(self.plugin_folder_root.clone()).expect("FIX IT");
 
-        self.start_plugins(&found_plugins);
+        for plugin in found_plugins {
+            self.plugins
+                .insert(plugin.manifest.id.clone(), Plugin::new(plugin));
+        }
     }
 
-    fn start_plugins(&mut self, plugins: &[PluginDescription]) {
-        let mut started: Vec<Plugin> = Vec::with_capacity(plugins.len());
+    pub fn start_plugins(&mut self, log_dir: &Path) {
+        let python_path = &self.python_path;
 
-        for plugin in plugins {
-            let mut cmd = self.base_command(&plugin.path);
+        for (plugin_id, plugin) in &mut self.plugins {
+            let cmd = base_command(python_path);
+            let _ = plugin.start(cmd, log_dir).inspect_err(|err| {
+                warn!(
+                    "Failed to initialize plugin {}. Reason: {}",
+                    plugin_id,
+                    err.to_string()
+                );
+            });
         }
+    }
+}
 
-        self.plugins = started;
+fn base_command(python_path: &Path) -> Command {
+    let mut cmd = Command::new(python_path);
+
+    cmd.arg("-c")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .env("PYTHONUNBUFFERED", "1")
+        .env("PYTHONNOUSERSITE", "1");
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    fn base_command(&self, workind_dir: &Path) -> Command {
-        let mut cmd = Command::new(&self.python_path);
-
-        cmd.arg("-c")
-            .current_dir(workind_dir)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .env("PYTHONUNBUFFERED", "1")
-            .env("PYTHONNOUSERSITE", "1");
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        #[cfg(debug_assertions)]
-        {
-            if let Some(parent) = self.python_path.parent() {
-                if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
-                    if let Some(root) = parent.parent() {
-                        cmd.env("PYTHONHOME", root.to_string_lossy().to_string());
-                    }
+    #[cfg(debug_assertions)]
+    {
+        if let Some(parent) = python_path.parent() {
+            if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
+                if let Some(root) = parent.parent() {
+                    cmd.env("PYTHONHOME", root.to_string_lossy().to_string());
                 }
             }
         }
-
-        cmd
     }
 
-    /// Executes an entrypoint for a local plugin using the isolated Python runtime.
-    pub async fn execute_action(
-        &self,
-        plugin_dir: &Path,
-        payload: &RpcRequest,
-    ) -> Result<RpcResponse, PythonRuntimeError> {
-        let script_file = plugin_dir.join(PYTHON_MAIN_FILE);
-
-        if !script_file.is_file() {
-            return Err(PythonRuntimeError::Plugin(PluginError::MainFileNotFound));
-        }
-
-        let payload_str = serde_json::to_string(payload).expect("This shouldn't fail");
-
-        let cmd = self
-            .base_command(plugin_dir)
-            .arg(script_file.to_string_lossy().to_string());
-
-        let mut child = cmd.spawn()?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(payload_str.as_bytes()).await?;
-        }
-
-        let timeout_duration = Duration::from_secs(30);
-        let output = tokio::time::timeout(timeout_duration, child.wait_with_output())
-            .await
-            .map_err(|_| PythonRuntimeError::ScriptTimeOut)?
-            .map_err(|e| PythonRuntimeError::PythonProcessWaitingError(e.to_string()))?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if !output.status.success() {
-            return Err(PythonRuntimeError::Plugin(PluginError::InternalError(
-                stderr,
-            )));
-        }
-
-        if stdout.trim().is_empty() {
-            return Ok(RpcResponse::Notification);
-        }
-
-        let response = serde_json::from_str::<RpcResponse>(&stdout)
-            .map_err(|e| PluginError::Rpc(JsonRpcError::NotValidRPCResponse(e.to_string())))?;
-
-        Ok(response)
-    }
+    cmd
 }

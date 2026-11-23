@@ -81,6 +81,9 @@ pub enum PluginError {
 /// Top-level errors managing the Python execution lifecycle.
 #[derive(Error, Debug)]
 pub enum PythonRuntimeError {
+    #[error("The plugin with id '{0}' could not be found.")]
+    PluginNotFound(String),
+
     #[error("Plugin structure or execution error: {0}")]
     Plugin(#[from] PluginError),
 
