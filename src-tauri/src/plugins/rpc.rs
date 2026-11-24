@@ -9,13 +9,6 @@ pub enum RpcId {
     Null,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum RpcParams {
-    ByName(serde_json::Map<String, serde_json::Value>),
-    ByPosition(Vec<serde_json::Value>),
-}
-
 impl From<serde_json::Map<String, serde_json::Value>> for RpcParams {
     fn from(value: serde_json::Map<String, serde_json::Value>) -> Self {
         Self::ByName(value)
@@ -40,12 +33,10 @@ pub struct RpcError {
 #[serde(untagged)]
 pub enum RpcResponse {
     Error {
-        jsonrpc: String,
         id: Option<RpcId>,
         error: RpcError,
     },
     Success {
-        jsonrpc: String,
         id: Option<RpcId>,
         result: serde_json::Value,
     },
@@ -62,11 +53,10 @@ impl RpcResponse {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcRequest {
-    pub jsonrpc: String,
     pub method: String,
 
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub params: Option<RpcParams>,
+    pub params: Option<serde_json::Map<String, serde_json::Value>>,
 
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RpcId>,
@@ -77,9 +67,8 @@ impl RpcRequest {
         self.id.is_none()
     }
 
-    pub fn new(method: String, params: Option<RpcParams>, id: Option<RpcId>) -> Self {
+    pub fn new(method: String, params: Option<serde_json::Map<String, serde_json::Value>>, id: Option<RpcId>) -> Self {
         RpcRequest {
-            jsonrpc: String::from("2.0"),
             method,
             params,
             id,

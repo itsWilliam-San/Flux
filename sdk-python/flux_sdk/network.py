@@ -1,5 +1,5 @@
-from typing import Optional
 from pydantic import BaseModel, Field
+
 
 class Pipe(BaseModel):
     Material: str
@@ -12,9 +12,9 @@ class Primary(BaseModel):
     TerrainLevel: float
     InvertLevel: float
     Depth: float = Field(ge=0.0, description="Não é possivel ter profundidade negativa.")
-    UpstreamManholes: Optional[list[str]]  = None
-    DownstreamConnection: Optional[tuple[str, str]]  = None
-    psets: Optional[dict] = None
+    UpstreamManholes: list[str] | None  = None
+    DownstreamConnection: tuple[str, str] | None  = None
+    psets: dict | None = None
 
 class Intermediate(BaseModel):
     ID: str
@@ -28,12 +28,12 @@ class Connection(BaseModel):
 
 class Segment(BaseModel):
     ID: str
-    connection: Optional[Connection] = Field(default=None, alias="Connection")
+    connection: Connection | None = Field(default=None, alias="Connection")
     pipe: Pipe = Field(..., alias="Pipe")
-    Intermediates: Optional[list[str]] = None
-    IntermediateDistance: Optional[float] = None
+    Intermediates: list[str] | None = None
+    IntermediateDistance: float | None = None
 
 class System(BaseModel):
     primary: list[Primary] = Field(..., alias="Primary")
-    Intermediates: Optional[list[Intermediate]] = Field(default=None, alias="Intermediates")
+    Intermediates: list[Intermediate] | None = Field(default=None, alias="Intermediates")
     Segments: list[Segment]

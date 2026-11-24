@@ -15,7 +15,7 @@ use tauri::{App, WebviewWindow};
 use tokio::sync::Mutex;
 
 use crate::error::PluginError;
-use crate::plugins::rpc::{RpcId, RpcParams, RpcRequest, RpcResponse};
+use crate::plugins::rpc::{RpcId, RpcRequest, RpcResponse};
 use crate::plugins::PluginExport;
 
 pub struct AppData {
@@ -47,7 +47,7 @@ async fn build_rpc_params(
     needs_network: bool,
     parameters: Option<serde_json::Value>,
     state: &tauri::State<'_, AppData>,
-) -> RpcParams {
+) -> serde_json::Map<String, serde_json::Value> {
     let mut map = serde_json::Map::new();
     map.insert(
         "parameters".to_string(),
@@ -63,7 +63,7 @@ async fn build_rpc_params(
         }
     }
 
-    RpcParams::from(map)
+    map
 }
 
 /// Guard: return an error if the export requires network data but none is loaded.

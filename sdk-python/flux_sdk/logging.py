@@ -1,7 +1,8 @@
 import logging
 from pathlib import Path
 
-def setup_logging(log_dir_arg: str, plugin_id: str) -> Path:
+
+def setup_logging(log_dir_arg: str, plugin_id: str) -> logging.Logger:
     log_dir = Path(log_dir_arg) if log_dir_arg else Path("logs")
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -17,4 +18,4 @@ def setup_logging(log_dir_arg: str, plugin_id: str) -> Path:
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
-    return log_file
+    return logger
