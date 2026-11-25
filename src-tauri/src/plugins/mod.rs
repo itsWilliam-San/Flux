@@ -163,7 +163,7 @@ pub mod plugin {
             let plugin_main = self.description.path.join("main.py");
 
             let mut command = base_command(python_path);
-            command.arg(&plugin_main).arg(log_dir);
+            command.arg(&plugin_main).arg(log_dir).current_dir(&self.description.path);
 
             let plugin_id = self.description.manifest.id.clone();
 

@@ -9,17 +9,6 @@ pub enum RpcId {
     Null,
 }
 
-impl From<serde_json::Map<String, serde_json::Value>> for RpcParams {
-    fn from(value: serde_json::Map<String, serde_json::Value>) -> Self {
-        Self::ByName(value)
-    }
-}
-
-impl From<Vec<serde_json::Value>> for RpcParams {
-    fn from(value: Vec<serde_json::Value>) -> Self {
-        Self::ByPosition(value)
-    }
-}
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct RpcError {

@@ -43,27 +43,16 @@ fn list_plugins(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
 }
 
 /// Build the params map for an RPC call, optionally embedding the current network data.
-async fn build_rpc_params(
-    needs_network: bool,
-    parameters: Option<serde_json::Value>,
+async fn insert_network_data(
+    parameters: &mut serde_json::Map<String, serde_json::Value>,
     state: &tauri::State<'_, AppData>,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut map = serde_json::Map::new();
-    map.insert(
-        "parameters".to_string(),
-        parameters.unwrap_or(serde_json::json!({})),
-    );
-
-    if needs_network {
-        let net = state.network.lock().await;
-        if let Some(ref system) = *net {
-            if let Ok(net_val) = serde_json::to_value(system) {
-                map.insert("network".to_string(), net_val);
-            }
+) {
+    let net = state.network.lock().await;
+    if let Some(ref system) = *net {
+        if let Ok(net_val) = serde_json::to_value(system) {
+            parameters.insert("network".to_string(), net_val);
         }
     }
-
-    map
 }
 
 /// Guard: return an error if the export requires network data but none is loaded.
@@ -83,13 +72,14 @@ async fn may_run(
 /// plugin_id  — the `id` field from the plugin's manifest.json
 /// action     — the `id` of the export entry to run
 /// parameters — key/value map matching that export's declared parameters
+/// TODO We should probably create another function but for notification.
 #[tauri::command]
 async fn execute_plugin_action(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppData>,
     plugin_id: String,
     action: String,
-    parameters: Option<serde_json::Value>,
+    mut parameters: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<serde_json::Value, String> {
     let description = state
         .runtime
@@ -105,10 +95,17 @@ async fn execute_plugin_action(
     may_run(&export, &state).await.map_err(|e| e.to_string())?;
 
     let needs_network = export.require_network_data.unwrap_or(false);
-    let params = build_rpc_params(needs_network, parameters, &state).await;
+
+    if needs_network {
+        if let Some(param) = &mut parameters {
+            insert_network_data(param, &state).await;
+        }
+    }
+
+    // This always creates a Request with ID 1.
     let payload = RpcRequest::new(
         export.entrypoint.clone(),
-        Some(params),
+        parameters,
         Some(RpcId::Number(1)),
     );
 
@@ -259,9 +256,6 @@ fn set_tray(app: &mut App) {
         .unwrap_or_else(|e| panic!("Failed to create the tray icon: {e}"));
 }
 
-// ---------------------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------------------
 
 pub fn run() {
     tauri::Builder::default()

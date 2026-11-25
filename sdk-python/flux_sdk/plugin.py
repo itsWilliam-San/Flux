@@ -110,6 +110,7 @@ class Plugin:
         return func(**dict_params)
 
     def _handle_line(self, raw_line: str) -> None:
+        self.logger.debug(f"Got string: {raw_line}")
         line = raw_line.strip()
         if not line:
             return
@@ -149,7 +150,7 @@ class Plugin:
             return
 
         if req.id is not None:
-            self._emit(rpc.Response(jsonrpc="2.0", id=req.id, result=result))
+            self._emit(rpc.Response(id=req.id, result=result))
 
     def start(self) -> None:
         """Run the blocking stdin read loop until standard input is closed.
