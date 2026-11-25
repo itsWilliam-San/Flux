@@ -4,7 +4,7 @@
         "update": "Update",
         "updating": "Updating…",
         "blocked": "Blocked",
-        "blocked_title": "Blocked: An imported hydraulic system is required",
+        "blocked_title": "Blocked: Hydraulic network data is required",
         "none": "None",
         "running": "Running…",
         "run_action": "Run Action",
@@ -54,12 +54,10 @@
         "search_plugin": "Search for a plugin..."
     },
     "plugin_detail": {
-        "plugin_blocked_title": "Export plugin locked",
-        "plugin_blocked_description": "This plugin requires hydraulic network data stored in the system in order to export. Use an import/extraction plugin to load data first.",
+        "plugin_blocked_title": "Action locked",
+        "plugin_blocked_description": "This action requires hydraulic network data loaded in Flux. Please import or load network data first.",
         "version": "Version",
-        "author": "Author",
-        "origin": "Origin",
-        "category": "Category",
+        "author": "Author(s)",
         "path": "Path",
         "repository": "Repository",
         "download": "Download",
@@ -68,7 +66,8 @@
         "run_action": "Run Action",
         "running": "Running…",
         "blocked": "Blocked",
-        "no_plugin": "No plugins connected. Connect a CAD plugin over TCP or install a local plugin.",
+        "no_plugin": "No plugin selected.",
+        "filter_by_tag": "Filter by #{{tag}}",
         "execution_output": "Execution Output",
         "execution_error": "Execution Error",
         "show_details": "Show details",
@@ -80,13 +79,11 @@
         "default_error_message": "An error occurred during execution."
     },
     "plugin_list": {
-        "extraction": "Extraction",
-        "exporter": "Exporter",
-        "local": "Local",
-        "bridge": "Bridge",
+        "all_tags": "All",
+        "no_plugins": "No plugins found.",
         "locked": "Locked"
     },
     "window": {
-        "loading_plugins": "Searching for local and bridge Plugins..."
+        "loading_plugins": "Loading plugins..."
     }
 }

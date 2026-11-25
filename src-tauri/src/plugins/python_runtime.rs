@@ -1,305 +1,148 @@
+use log::warn;
+
+use crate::error::PythonRuntimeError;
+use crate::plugins::loader::find_plugins;
+use crate::plugins::plugin::{Plugin, PluginDescription};
+use crate::plugins::rpc::{RpcRequest, RpcResponse};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use std::time::Duration;
-use tauri::Manager;
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
+use std::sync::Mutex;
 
-const RUNNER_SCRIPT: &str = r#"
-import sys
-import json
-import importlib.util
-from pathlib import Path
+const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
 
-def main():
-    if len(sys.argv) < 3:
-        sys.stderr.write("Usage: runner.py <plugin_dir> <entrypoint>\n")
-        sys.exit(1)
-
-    plugin_dir = Path(sys.argv[1]).resolve()
-    entrypoint = sys.argv[2]
-
-    if ":" not in entrypoint:
-        sys.stderr.write(f"Invalid entrypoint format: {entrypoint}. Expected 'file.py:function_name'\n")
-        sys.exit(1)
-
-    file_name, func_name = entrypoint.split(":", 1)
-    target_file = plugin_dir / file_name
-
-    if not target_file.is_file():
-        sys.stderr.write(f"Plugin entry file not found: {target_file}\n")
-        sys.exit(1)
-
-    if str(plugin_dir) not in sys.path:
-        sys.path.insert(0, str(plugin_dir))
-
-    # Read stdin JSON-RPC payload
-    try:
-        raw_in = sys.stdin.read()
-        payload = json.loads(raw_in) if raw_in.strip() else {}
-    except Exception as e:
-        sys.stderr.write(f"Failed to parse stdin JSON payload: {e}\n")
-        sys.exit(1)
-
-    # Import module
-    try:
-        spec = importlib.util.spec_from_file_location("plugin_entry_module", str(target_file))
-        if spec is None or spec.loader is None:
-            sys.stderr.write(f"Could not load module specification from {target_file}\n")
-            sys.exit(1)
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-    except Exception as e:
-        sys.stderr.write(f"Error loading module {file_name}: {e}\n")
-        sys.exit(1)
-
-    func = getattr(mod, func_name, None)
-    if func is None or not callable(func):
-        sys.stderr.write(f"Function '{func_name}' not found or not callable in {file_name}\n")
-        sys.exit(1)
-
-    req_id = payload.get("id") if isinstance(payload, dict) else 1
-
-    try:
-        result = func(payload)
-        # If the plugin returns an envelope that already is JSON-RPC 2.0, keep it.
-        if isinstance(result, dict) and "jsonrpc" in result:
-            response = result
-        else:
-            response = {
-                "jsonrpc": "2.0",
-                "result": result if result is not None else {"status": "success"},
-                "id": req_id
-            }
-        sys.stdout.write(json.dumps(response))
-    except Exception as e:
-        error_response = {
-            "jsonrpc": "2.0",
-            "error": {
-                "code": -32000,
-                "message": str(e)
-            },
-            "id": req_id
-        }
-        sys.stdout.write(json.dumps(error_response))
-        sys.stderr.write(f"Exception during execution of {func_name}: {e}\n")
-        sys.exit(1)
-
-if __name__ == "__main__":
-    main()
-"#;
-
-pub struct PythonRuntime;
-
-impl PythonRuntime {
-    pub fn resolve_python_executable(app: Option<&tauri::AppHandle>) -> Result<PathBuf, String> {
-        if cfg!(debug_assertions) {
-            let output = if cfg!(target_os = "windows") {
-                std::process::Command::new("where.exe").arg("python").output()
-            } else {
-                std::process::Command::new("which").arg("python3").output()
-            };
-
-            if let Ok(res) = output {
-                if res.status.success() {
-                    let stdout = String::from_utf8_lossy(&res.stdout);
-                    if let Some(first_line) = stdout.lines().next() {
-                        let path = PathBuf::from(first_line.trim());
-                        return Ok(path);
-                    }
-                }
-            }
-        } else {
-            // 1. Tauri bundled resource directory
-            if let Some(handle) = app {
-                if let Ok(res_dir) = handle.path().resource_dir() {
-                    let dir = res_dir.join("python-runtime");
-
-                    if cfg!(target_os = "windows") {
-                        let win_bin1 = dir.join("python.exe");
-                        let win_bin2 = dir.join("Scripts").join("python.exe");
-                        if win_bin1.is_file() {
-                            return Ok(win_bin1);
-                        }
-                        if win_bin2.is_file() {
-                            return Ok(win_bin2);
-                        }
-                    } else {
-                        let unix_bin1 = dir.join("bin").join("python3");
-                        let unix_bin2 = dir.join("bin").join("python");
-                        if unix_bin1.is_file() {
-                            return Ok(unix_bin1);
-                        }
-                        if unix_bin2.is_file() {
-                            return Ok(unix_bin2);
-                        }
-                    }
-                }
-            }
-        }
-
-        Err("No Python executable found. Please ensure the bundled portable Python runtime is installed in python-runtime.".to_string())
-    }
-
-    /// Executes an entrypoint for a local plugin using the isolated Python runtime.
-    pub async fn execute_action(
-        app: Option<&tauri::AppHandle>,
-        plugin_dir: &Path,
-        entrypoint: &str,
-        payload: &serde_json::Value,
-    ) -> Result<serde_json::Value, String> {
-        let python_exe = Self::resolve_python_executable(app)?;
-
-        // Ensure entrypoint script exists
-        let parts: Vec<&str> = entrypoint.split(':').collect();
-        if parts.is_empty() {
-            return Err(format!("Invalid entrypoint: {}", entrypoint));
-        }
-        let script_file = plugin_dir.join(parts[0]);
-        if !script_file.is_file() {
-            return Err(format!(
-                "Plugin entry file not found: {}",
-                script_file.display()
-            ));
-        }
-
-        let payload_str = serde_json::to_string(payload)
-            .map_err(|e| format!("Failed to serialize payload: {}", e))?;
-
-        let mut cmd = Command::new(&python_exe);
-        cmd.arg("-c")
-            .arg(RUNNER_SCRIPT)
-            .arg(plugin_dir.to_string_lossy().to_string())
-            .arg(entrypoint)
-            .current_dir(plugin_dir)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .env("PYTHONUNBUFFERED", "1")
-            .env("PYTHONNOUSERSITE", "1");
-
-        #[cfg(target_os = "windows")]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x08000000;
-            cmd.creation_flags(CREATE_NO_WINDOW);
-        }
-
-        if !cfg!(debug_assertions) {
-            if let Some(parent) = python_exe.parent() {
-                if parent.file_name().and_then(|n| n.to_str()) == Some("bin") {
-                    if let Some(root) = parent.parent() {
-                        cmd.env("PYTHONHOME", root.to_string_lossy().to_string());
-                    }
-                }
-            }
-        }
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("Failed to spawn Python process ({:?}): {}", python_exe, e))?;
-
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(payload_str.as_bytes())
-                .await
-                .map_err(|e| format!("Failed to write to Python stdin: {}", e))?;
-        }
-
-        let timeout_duration = Duration::from_secs(30);
-        let output = tokio::time::timeout(timeout_duration, child.wait_with_output())
-            .await
-            .map_err(|_| "Plugin execution timed out after 30 seconds".to_string())?
-            .map_err(|e| format!("Error waiting for Python process: {}", e))?;
-
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-
-        if !output.status.success() {
-            return Err(format!(
-                "Python script execution failed with exit code {:?}.\nStderr:\n{}\nStdout:\n{}",
-                output.status.code(),
-                stderr.trim(),
-                stdout.trim()
-            ));
-        }
-
-        if stdout.trim().is_empty() {
-            return Ok(serde_json::json!({
-                "jsonrpc": "2.0",
-                "result": {
-                    "status": "success",
-                    "message": "Action completed with no output"
-                },
-                "id": payload.get("id").cloned().unwrap_or(serde_json::json!(1))
-            }));
-        }
-
-        match serde_json::from_str::<serde_json::Value>(&stdout) {
-            Ok(json_val) => {
-                if let Some(err_obj) = json_val.get("error") {
-                    let msg = err_obj
-                        .get("message")
-                        .and_then(|m| m.as_str())
-                        .unwrap_or("Unknown JSON-RPC error");
-                    return Err(msg.to_string());
-                }
-                Ok(json_val)
-            }
-            Err(_) => Ok(serde_json::json!({
-                "jsonrpc": "2.0",
-                "result": {
-                    "status": "success",
-                    "output": stdout.trim()
-                },
-                "id": payload.get("id").cloned().unwrap_or(serde_json::json!(1))
-            })),
-        }
-    }
+/// Wrapping the HashMap in a std::sync::Mutex makes PythonRuntime Send + Sync,
+/// which is required for Tauri's managed AppData state.
+pub struct PythonRuntime {
+    python_path: PathBuf,
+    pub plugin_folder_root: PathBuf,
+    plugins: Mutex<HashMap<String, Plugin>>,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
+// SAFETY: PythonRuntime is only mutated (load_plugins / start_plugins) during
+// single-threaded setup before Tauri registers it. After that, all access goes
+// through the inner Mutex, making concurrent reads safe.
+unsafe impl Send for PythonRuntime {}
+unsafe impl Sync for PythonRuntime {}
 
-    #[tokio::test]
-    async fn test_python_action_execution() {
-        let temp_dir = std::env::temp_dir().join(format!("sewerage_test_{}", std::process::id()));
-        let _ = fs::create_dir_all(&temp_dir);
-
-        let script_content = r#"
-def run_test(payload):
-    params = payload.get("params", {}).get("parameters", {}) if "params" in payload else payload.get("parameters", {})
-    return {
-        "status": "success",
-        "greeting": f"Hello {params.get('name', 'World')}"
-    }
-"#;
-        fs::write(temp_dir.join("main.py"), script_content).unwrap();
-
-        let payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "main.py:run_test",
-            "params": {
-                "parameters": { "name": "Antigravity" }
-            },
-            "id": 1
-        });
-
-        let result = PythonRuntime::execute_action(None, &temp_dir, "main.py:run_test", &payload)
-            .await
-            .expect("Action execution failed");
-
-        let result_obj = if let Some(res) = result.get("result") {
-            res
+fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRuntimeError> {
+    if cfg!(debug_assertions) {
+        let output = if cfg!(target_os = "windows") {
+            std::process::Command::new("where.exe")
+                .arg("python")
+                .output()
         } else {
-            &result
+            std::process::Command::new("which").arg("python3").output()
         };
 
-        assert_eq!(result_obj["status"], "success");
-        assert_eq!(result_obj["greeting"], "Hello Antigravity");
+        if let Ok(res) = output {
+            if res.status.success() {
+                let stdout = String::from_utf8_lossy(&res.stdout);
+                if let Some(first_line) = stdout.lines().next() {
+                    let path = PathBuf::from(first_line.trim());
+                    return Ok(path);
+                }
+            }
+        }
+    } else {
+        let dir = resource_dir.join(PYTHON_RUNTIME_FOLDER);
 
-        let _ = fs::remove_dir_all(temp_dir);
+        if cfg!(target_os = "windows") {
+            let win_bin1 = dir.join("python.exe");
+            let win_bin2 = dir.join("Scripts").join("python.exe");
+            if win_bin1.is_file() {
+                return Ok(win_bin1);
+            }
+            if win_bin2.is_file() {
+                return Ok(win_bin2);
+            }
+        } else {
+            let unix_bin1 = dir.join("bin").join("python3");
+            let unix_bin2 = dir.join("bin").join("python");
+            if unix_bin1.is_file() {
+                return Ok(unix_bin1);
+            }
+            if unix_bin2.is_file() {
+                return Ok(unix_bin2);
+            }
+        }
+    }
+    Err(PythonRuntimeError::PythonExecutableNotFound)
+}
+
+impl PythonRuntime {
+    pub fn get_plugin(&self, plugin_id: &str) -> Option<PluginDescription> {
+        let plugins = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+
+        plugins
+            .get(plugin_id)
+            .map(|plugin| plugin.description.clone())
+    }
+
+    pub fn new(
+        resource_dir: PathBuf,
+        plugin_folder_root: PathBuf,
+    ) -> Result<Self, PythonRuntimeError> {
+        let python_path = resolve_python_executable(resource_dir)?;
+        Ok(Self {
+            python_path,
+            plugin_folder_root,
+            plugins: Mutex::new(HashMap::new()),
+        })
+    }
+
+    /// Returns a snapshot of all loaded plugin descriptions for the frontend.
+    pub fn get_plugins(&self) -> Vec<PluginDescription> {
+        self.plugins
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .values()
+            .map(|plugin| plugin.description.clone())
+            .collect()
+    }
+
+    /// Discover plugins on disk and register them (not yet started).
+    pub fn load_plugins(&mut self) {
+        match find_plugins(self.plugin_folder_root.clone()) {
+            Ok(found) => {
+                let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+                for plugin in found {
+                    let id = plugin.manifest.id.clone();
+                    guard.entry(id).or_insert_with(|| Plugin::new(plugin));
+                }
+            }
+            Err(e) => {
+                warn!("Failed to scan plugins directory: {e}");
+            }
+        }
+    }
+
+    /// Start all loaded plugins (spawn their processes).
+    pub fn start_plugins(&mut self, log_dir: &Path) {
+        let python_path = self.python_path.clone();
+        let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+        for (plugin_id, plugin) in guard.iter_mut() {
+            let _ = plugin.start(&python_path, log_dir).inspect_err(|err| {
+                warn!(
+                    "Failed to initialize plugin '{}'. Reason: {}",
+                    plugin_id, err
+                );
+            });
+        }
+    }
+
+    /// Send an RPC request to a running plugin and wait for its response.
+    pub fn execute_plugin_action(
+        &self,
+        plugin_id: &str,
+        payload: RpcRequest,
+    ) -> Result<RpcResponse, PythonRuntimeError> {
+        let guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+        let plugin = guard
+            .get(plugin_id)
+            .ok_or_else(|| PythonRuntimeError::PluginNotFound(plugin_id.to_owned()))?;
+
+        plugin
+            .send_request(payload)
+            .map_err(PythonRuntimeError::Plugin)
     }
 }

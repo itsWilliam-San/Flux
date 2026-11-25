@@ -1,7 +1,3 @@
-export type PluginCategory = "extraction" | "exporter" | (string & {});
-
-export type PluginOrigin = "local" | "bridge";
-
 export interface PluginParameter {
     name: string;
     param_type: "string" | "boolean" | "select" | string;
@@ -17,25 +13,31 @@ export interface PluginExport {
     description: string;
     entrypoint: string;
     parameters?: PluginParameter[];
+    require_network_data?: boolean;
+    update_network_data?: boolean;
 }
 
 export interface PluginManifest {
     name: string;
     description: string;
     version: string;
-    author: string;
+    /** Now an array — join with ", " for display */
+    author: string[];
+    /** Free-form tags for filtering and display */
+    tags: string[];
     repository?: string;
     download_url?: string;
+    /** asset:// URL or http(s):// URL */
     icon?: string;
     id: string;
-    category: PluginCategory;
     exports: PluginExport[];
 }
 
-export interface PluginDescriptor {
-    origin: PluginOrigin;
+/** What the backend's list_plugins command returns */
+export interface PluginDescription {
     manifest: PluginManifest;
-    path?: string;
+    /** Absolute path to the plugin directory */
+    path: string;
 }
 
 export interface IpcPayload {

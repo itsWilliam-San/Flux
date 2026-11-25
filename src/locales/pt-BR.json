@@ -4,7 +4,7 @@
         "update": "Atualizar",
         "updating": "Atualizando…",
         "blocked": "Bloqueado",
-        "blocked_title": "Bloqueado: Requer dados de rede importados",
+        "blocked_title": "Bloqueado: Requer dados de rede hidráulica",
         "none": "Nenhum",
         "running": "Executando…",
         "run_action": "Executar Ação",
@@ -54,12 +54,10 @@
         "search_plugin": "Buscar um plugin..."
     },
     "plugin_detail": {
-        "plugin_blocked_title": "Plugin de exportação bloqueado",
-        "plugin_blocked_description": "Este plugin requer dados de rede hidráulica armazenados no sistema para poder exportar. Utilize um plugin de importação/extração para carregar os dados primeiro.",
+        "plugin_blocked_title": "Ação bloqueada",
+        "plugin_blocked_description": "Esta ação requer dados de rede hidráulica carregados no Flux. Por favor, importe ou carregue dados de rede primeiro.",
         "version": "Versão",
-        "author": "Autor",
-        "origin": "Origem",
-        "category": "Categoria",
+        "author": "Autor(es)",
         "path": "Caminho",
         "repository": "Repositório",
         "download": "Download",
@@ -68,7 +66,8 @@
         "run_action": "Executar Ação",
         "running": "Executando…",
         "blocked": "Bloqueado",
-        "no_plugin": "Nenhum plugin conectado. Conecte um plugin CAD via TCP ou instale um plugin local.",
+        "no_plugin": "Nenhum plugin selecionado.",
+        "filter_by_tag": "Filtrar por #{{tag}}",
         "execution_output": "Saída da Execução",
         "execution_error": "Erro na Execução",
         "show_details": "Ver detalhes",
@@ -80,13 +79,11 @@
         "default_error_message": "Ocorreu um erro durante a execução."
     },
     "plugin_list": {
-        "extraction": "Extração",
-        "exporter": "Exportação",
-        "local": "Local",
-        "bridge": "Bridge",
+        "all_tags": "Todos",
+        "no_plugins": "Nenhum plugin encontrado.",
         "locked": "Bloqueado"
     },
     "window": {
-        "loading_plugins": "Buscando plugins locais e bridge..."
+        "loading_plugins": "Carregando plugins..."
     }
 }

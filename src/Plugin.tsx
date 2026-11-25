@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 import PluginDetails from "./components/plugins/PluginDetails";
 import PluginList from "./components/plugins/PluginList";
-import type { PluginDescriptor } from "./types/plugins";
+import type { PluginDescription } from "./types/plugins";
 import { Loader2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
@@ -12,15 +12,15 @@ interface PluginsWindowProps {
     onOpenSettings?: () => void;
 }
 
-function matchesSearch(plugin: PluginDescriptor, query: string): boolean {
+function matchesSearch(plugin: PluginDescription, query: string): boolean {
     const q = query.trim().toLowerCase();
-    if (!q) {
-        return true;
-    }
+    if (!q) return true;
 
     const { manifest } = plugin;
-    return [manifest.name, manifest.description].some((value) =>
-        value.toLowerCase().includes(q),
+    return (
+        manifest.name.toLowerCase().includes(q) ||
+        manifest.description.toLowerCase().includes(q) ||
+        manifest.tags.some((tag) => tag.toLowerCase().includes(q))
     );
 }
 
@@ -30,8 +30,9 @@ export default function PluginsWindow({
 }: PluginsWindowProps) {
     const { t } = useTranslation();
     const [search, setSearch] = useState("");
+    const [selectedTag, setSelectedTag] = useState<string | null>(null);
     const [loading, setLoading] = useState(true);
-    const [plugins, setPlugins] = useState<PluginDescriptor[]>([]);
+    const [plugins, setPlugins] = useState<PluginDescription[]>([]);
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [hasStoredNetwork, setHasStoredNetwork] = useState(false);
 
@@ -47,7 +48,7 @@ export default function PluginsWindow({
     const fetchPlugins = useCallback(async () => {
         setLoading(true);
         try {
-            const result = await invoke<PluginDescriptor[]>("list_plugins");
+            const result = await invoke<PluginDescription[]>("list_plugins");
             setPlugins(result);
             await checkNetworkStatus();
         } catch (error) {
@@ -61,37 +62,54 @@ export default function PluginsWindow({
         fetchPlugins();
     }, [fetchPlugins]);
 
+    // Listen for network data state changes from the backend
     useEffect(() => {
-        let unlistenFn: (() => void) | undefined;
+        let unlistenFn: UnlistenFn | undefined;
         listen<boolean>("network-data-changed", (event) => {
             setHasStoredNetwork(Boolean(event.payload));
         }).then((unlisten) => {
             unlistenFn = unlisten;
         });
-
         return () => {
-            if (unlistenFn) {
-                unlistenFn();
-            }
+            unlistenFn?.();
         };
     }, []);
 
-    const filtered = useMemo(
-        () => plugins.filter((plugin) => matchesSearch(plugin, search)),
-        [plugins, search],
-    );
+    // Derive all unique tags from currently loaded plugins
+    const availableTags = useMemo(() => {
+        const tagSet = new Set<string>();
+        for (const p of plugins) {
+            for (const tag of p.manifest.tags) {
+                if (tag.trim()) tagSet.add(tag.trim());
+            }
+        }
+        return Array.from(tagSet).sort();
+    }, [plugins]);
 
+    // Filter plugins by both search query and active tag
+    const filtered = useMemo(() => {
+        return plugins.filter((plugin) => {
+            if (selectedTag && !plugin.manifest.tags.includes(selectedTag)) {
+                return false;
+            }
+            return matchesSearch(plugin, search);
+        });
+    }, [plugins, search, selectedTag]);
+
+    // Keep selection valid when filtered results change
     useEffect(() => {
         setSelectedId((current) => {
-            if (filtered.some((plugin) => plugin.manifest.id === current)) {
-                return current;
-            }
+            if (filtered.some((p) => p.manifest.id === current)) return current;
             return filtered[0]?.manifest.id ?? null;
         });
     }, [filtered]);
 
     const selected =
-        filtered.find((plugin) => plugin.manifest.id === selectedId) ?? null;
+        filtered.find((p) => p.manifest.id === selectedId) ?? null;
+
+    const handleTagSelect = useCallback((tag: string | null) => {
+        setSelectedTag(tag);
+    }, []);
 
     return (
         <div className="flex flex-1 min-h-0 h-full w-full flex-col bg-background text-foreground">
@@ -106,11 +124,14 @@ export default function PluginsWindow({
                 <div className="flex min-h-0 flex-1 flex-row">
                     <PluginList
                         plugins={filtered}
+                        availableTags={availableTags}
+                        selectedTag={selectedTag}
                         selectedId={selectedId}
                         search={search}
                         loading={loading}
                         hasStoredNetwork={hasStoredNetwork}
                         onSearchChange={setSearch}
+                        onTagSelect={handleTagSelect}
                         onRefresh={fetchPlugins}
                         onSelect={setSelectedId}
                         showSettingsButton={nativeDecorations}
@@ -120,6 +141,7 @@ export default function PluginsWindow({
                         plugin={selected}
                         hasStoredNetwork={hasStoredNetwork}
                         onActionSuccess={checkNetworkStatus}
+                        onSelectTag={handleTagSelect}
                     />
                 </div>
             )}

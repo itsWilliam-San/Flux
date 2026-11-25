@@ -1,33 +1,23 @@
-import { useMemo } from "react";
+import { useEffect } from "react";
 import SearchComponent from "../Search";
 import { Button } from "../ui/button";
 import { cn } from "@/lib/utils";
-import type {
-    PluginCategory,
-    PluginDescriptor,
-    PluginOrigin,
-} from "@/types/plugins";
-import { Lock, Settings } from "lucide-react";
+import type { PluginDescription } from "@/types/plugins";
+import { Lock, Settings, Tag, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
-
-const DEFAULT_CATEGORIES: { id: PluginCategory; labelKey: string; fallback: string }[] = [
-    { id: "extraction", labelKey: "plugin_list.extraction", fallback: "Extraction" },
-    { id: "exporter", labelKey: "plugin_list.exporter", fallback: "Exporter" },
-];
-
-const ORIGINS: { id: PluginOrigin; labelKey: string; fallback: string }[] = [
-    { id: "local", labelKey: "plugin_list.local", fallback: "Local" },
-    { id: "bridge", labelKey: "plugin_list.bridge", fallback: "Bridge" },
-];
+import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
 interface PluginListProps {
-    plugins: PluginDescriptor[];
+    plugins: PluginDescription[];
+    availableTags: string[];
+    selectedTag: string | null;
     selectedId: string | null;
     search: string;
     loading: boolean;
     hasStoredNetwork: boolean;
     showSettingsButton?: boolean;
     onSearchChange: (value: string) => void;
+    onTagSelect: (tag: string | null) => void;
     onRefresh: () => void;
     onSelect: (id: string) => void;
     onOpenSettings?: () => void;
@@ -35,38 +25,37 @@ interface PluginListProps {
 
 export default function PluginList({
     plugins,
+    availableTags,
+    selectedTag,
     selectedId,
     search,
     loading,
     hasStoredNetwork,
     showSettingsButton = false,
     onSearchChange,
+    onTagSelect,
     onRefresh,
     onSelect,
     onOpenSettings,
 }: PluginListProps) {
     const { t } = useTranslation();
 
-    const categories = useMemo(() => {
-        const catMap = new Map<string, string>();
-        for (const cat of DEFAULT_CATEGORIES) {
-            catMap.set(cat.id, cat.fallback);
-        }
-        for (const plugin of plugins) {
-            const cat = plugin.manifest.category;
-            if (!catMap.has(cat)) {
-                const label = cat.charAt(0).toUpperCase() + cat.slice(1);
-                catMap.set(cat, label);
-            }
-        }
-        return Array.from(catMap.entries()).map(([id, fallback]) => ({
-            id: id as PluginCategory,
-            fallback,
-        }));
-    }, [plugins]);
+    // Auto-refresh when the backend requests an update
+    useEffect(() => {
+        let unlistenFn: UnlistenFn | undefined;
+        listen<boolean>("should-update-plugin-list", () => {
+            onRefresh();
+        }).then((unlisten) => {
+            unlistenFn = unlisten;
+        });
+        return () => {
+            unlistenFn?.();
+        };
+    }, [onRefresh]);
 
     return (
-        <aside className="flex h-full w-[280px] shrink-0 flex-col gap-3 overflow-hidden border-r border-border p-4 bg-muted/10">
+        <aside className="flex h-full w-72 shrink-0 flex-col gap-3 overflow-hidden border-r border-border p-4 bg-muted/10">
+            {/* App title & settings */}
             {showSettingsButton && onOpenSettings ? (
                 <div className="flex items-center justify-between pb-1 border-b border-border">
                     <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
@@ -83,8 +72,50 @@ export default function PluginList({
                 </div>
             ) : null}
 
+            {/* Search Input */}
             <SearchComponent value={search} onChange={onSearchChange} />
 
+            {/* Tag Filter Chips */}
+            {availableTags.length > 0 && (
+                <div className="flex items-center gap-1 overflow-x-auto pb-1 no-scrollbar text-xs">
+                    <button
+                        type="button"
+                        onClick={() => onTagSelect(null)}
+                        className={cn(
+                            "rounded-full px-2 py-0.5 whitespace-nowrap transition-colors cursor-pointer text-[11px] font-medium border",
+                            selectedTag === null
+                                ? "bg-primary text-primary-foreground border-primary"
+                                : "bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground",
+                        )}
+                    >
+                        {t("plugin_list.all_tags")}
+                    </button>
+                    {availableTags.map((tag) => {
+                        const isSelected = selectedTag === tag;
+                        return (
+                            <button
+                                key={tag}
+                                type="button"
+                                onClick={() =>
+                                    onTagSelect(isSelected ? null : tag)
+                                }
+                                className={cn(
+                                    "rounded-full px-2 py-0.5 whitespace-nowrap transition-colors cursor-pointer text-[11px] font-medium border inline-flex items-center gap-1",
+                                    isSelected
+                                        ? "bg-primary text-primary-foreground border-primary"
+                                        : "bg-background text-muted-foreground border-border hover:bg-muted hover:text-foreground",
+                                )}
+                            >
+                                <Tag className="size-2.5 opacity-70" />
+                                <span>{tag}</span>
+                                {isSelected && <X className="size-2.5" />}
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
+
+            {/* Refresh / Update Button */}
             <Button
                 type="button"
                 size="sm"
@@ -95,107 +126,81 @@ export default function PluginList({
                 {loading ? t("common.loading") : t("common.update")}
             </Button>
 
+            {/* Plugins List */}
             <div className="min-h-0 flex-1 overflow-y-auto">
-                {categories.map((category) => {
-                    const catTitle =
-                        category.id === "extraction"
-                            ? t("plugin_list.extraction")
-                            : category.id === "exporter"
-                            ? t("plugin_list.exporter")
-                            : category.fallback;
-
-                    return (
-                        <section key={category.id} className="mb-4">
-                            <div className="flex items-center justify-between mb-1">
-                                <h2 className="text-sm font-semibold tracking-wide text-foreground uppercase">
-                                    {catTitle}
-                                </h2>
-                                {category.id === "exporter" && !hasStoredNetwork ? (
-                                    <span
-                                        className="flex items-center text-amber-500/80 text-[10px] shrink-0 font-normal"
-                                        title={t("common.blocked_title")}
-                                    >
-                                        <Lock className="size-3 mr-0.5" />
-                                        {t("common.blocked")}
-                                    </span>
-                                ) : null}
-                            </div>
-
-                            {ORIGINS.map((origin) => {
-                                const items = plugins.filter(
-                                    (plugin) =>
-                                        plugin.manifest.category === category.id &&
-                                        plugin.origin === origin.id,
+                {plugins.length === 0 ? (
+                    <p className="py-4 text-center text-xs text-muted-foreground">
+                        {t("plugin_list.no_plugins")}
+                    </p>
+                ) : (
+                    <ul className="flex flex-col gap-1">
+                        {plugins.map((plugin) => {
+                            const isSelected = selectedId === plugin.manifest.id;
+                            const allNeedNetwork =
+                                plugin.manifest.exports.length > 0 &&
+                                plugin.manifest.exports.every(
+                                    (e) => e.require_network_data === true,
                                 );
+                            const isBlocked = allNeedNetwork && !hasStoredNetwork;
 
-                                const originLabel =
-                                    origin.id === "local"
-                                        ? t("plugin_list.local")
-                                        : t("plugin_list.bridge");
-
-                                return (
-                                    <div key={origin.id} className="mt-2">
-                                        <h3 className="text-xs font-medium text-muted-foreground">
-                                            {originLabel}
-                                        </h3>
-                                        {items.length === 0 ? (
-                                            <p className="py-1 pl-2 text-xs text-muted-foreground">
-                                                {t("common.none")}
-                                            </p>
-                                        ) : (
-                                            <ul className="mt-1 flex flex-col gap-0.5">
-                                                {items.map((plugin) => {
-                                                    const muted =
-                                                        plugin.manifest.category ===
-                                                        "exporter" &&
-                                                        !hasStoredNetwork;
-                                                    const selected =
-                                                        selectedId ===
-                                                        plugin.manifest.id;
-
-                                                    return (
-                                                        <li key={plugin.manifest.id}>
-                                                            <button
-                                                                type="button"
-                                                                onClick={() =>
-                                                                    onSelect(
-                                                                        plugin.manifest
-                                                                            .id,
-                                                                    )
-                                                                }
-                                                                className={cn(
-                                                                    "w-full rounded-md px-2 py-1.5 text-left text-sm transition-colors cursor-pointer",
-                                                                    selected
-                                                                        ? "bg-muted text-foreground font-medium"
-                                                                        : "hover:bg-muted/60 text-muted-foreground hover:text-foreground",
-                                                                    muted &&
-                                                                        "opacity-60",
-                                                                )}
-                                                            >
-                                                                <div className="flex items-center justify-between gap-1.5">
-                                                                    <span className="truncate">
-                                                                        {
-                                                                            plugin
-                                                                                .manifest
-                                                                                .name
-                                                                        }
-                                                                    </span>
-                                                                    {muted ? (
-                                                                        <Lock className="size-3 text-amber-500/70 shrink-0" />
-                                                                    ) : null}
-                                                                </div>
-                                                            </button>
-                                                        </li>
-                                                    );
-                                                })}
-                                            </ul>
+                            return (
+                                <li key={plugin.manifest.id}>
+                                    <button
+                                        type="button"
+                                        onClick={() =>
+                                            onSelect(plugin.manifest.id)
+                                        }
+                                        className={cn(
+                                            "w-full rounded-md p-2 text-left text-sm transition-colors cursor-pointer border",
+                                            isSelected
+                                                ? "bg-muted text-foreground font-medium border-border shadow-xs"
+                                                : "border-transparent hover:bg-muted/60 text-muted-foreground hover:text-foreground",
+                                            isBlocked && "opacity-60",
                                         )}
-                                    </div>
-                                );
-                            })}
-                        </section>
-                    );
-                })}
+                                    >
+                                        <div className="flex items-center justify-between gap-1.5">
+                                            <span className="truncate font-medium text-foreground">
+                                                {plugin.manifest.name}
+                                            </span>
+                                            {isBlocked ? (
+                                                <span title={t("common.blocked_title")}>
+                                                    <Lock className="size-3 text-amber-500/80 shrink-0" />
+                                                </span>
+                                            ) : null}
+                                        </div>
+
+                                        {/* Tag pills inside plugin list item */}
+                                        {plugin.manifest.tags.length > 0 && (
+                                            <div className="mt-1.5 flex flex-wrap gap-1">
+                                                {plugin.manifest.tags.map((tag) => (
+                                                    <span
+                                                        key={tag}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            onTagSelect(
+                                                                selectedTag === tag
+                                                                    ? null
+                                                                    : tag,
+                                                            );
+                                                        }}
+                                                        className={cn(
+                                                            "inline-block rounded px-1.5 py-0.2 text-[10px] leading-tight font-medium cursor-pointer transition-colors",
+                                                            selectedTag === tag
+                                                                ? "bg-primary text-primary-foreground"
+                                                                : "bg-muted text-muted-foreground hover:bg-muted/80 hover:text-foreground",
+                                                        )}
+                                                    >
+                                                        #{tag}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </button>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                )}
             </div>
         </aside>
     );

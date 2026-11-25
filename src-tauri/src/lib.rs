@@ -1,6 +1,10 @@
-use log::{debug, error, info, warn};
+use crate::network::System;
+use crate::plugins::plugin::PluginDescription;
+use crate::plugins::python_runtime::PythonRuntime;
+use log::{error, info, warn};
 use std::fs;
-use std::{collections::HashMap, sync::Arc};
+use std::path::Path;
+use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -8,255 +12,127 @@ use tauri::{
 };
 use tauri::{App, WebviewWindow};
 
-use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::Mutex,
-};
+use tokio::sync::Mutex;
 
-use crate::error::HandshakeError;
-use crate::plugins::{PluginDescriptor, PluginManifest, PluginOrigin};
+use crate::error::PluginError;
+use crate::plugins::rpc::{RpcId, RpcRequest, RpcResponse};
+use crate::plugins::PluginExport;
 
 pub struct AppData {
-    pub sockets: SocketMap,
     pub network: Arc<Mutex<Option<network::System>>>,
+    pub runtime: PythonRuntime,
 }
 
-type SocketMap = Arc<Mutex<HashMap<String, (TcpStream, PluginManifest)>>>;
+impl AppData {
+    pub async fn update_network_data(&self, system: Option<System>) {
+        let mut net_guard = self.network.lock().await;
+        *net_guard = system;
+    }
+}
 
-const ADDRESS: &str = "127.0.0.1:8080";
-const READ_BYTES_SOCKET: usize = 4096;
+const NETWORK_UPDATE_EVENT: &str = "network-data-changed";
+const SHOULD_UPDATE_PLUGIN_LIST_EVENT: &str = "should-update-plugin-list";
 
 mod error;
 mod network;
 mod plugins;
 
-fn extract_system_from_value(val: &serde_json::Value) -> Result<network::System, String> {
-    if let Some(inner) = val.get("system") {
-        let sys =
-            serde_json::from_value::<network::System>(inner.clone()).map_err(|e| e.to_string())?;
-
-        return Ok(sys);
-    }
-
-    return Err("No field \"system\" found inside the received response".into());
-}
-
 #[tauri::command]
-async fn list_plugins(
-    app: tauri::AppHandle,
-    state: tauri::State<'_, AppData>,
-) -> Result<Vec<PluginDescriptor>, String> {
-    let sockets = state.sockets.lock().await;
-
-    let mut plugins: Vec<PluginDescriptor> = sockets
-        .values()
-        .map(|(_, manifest)| PluginDescriptor {
-            origin: PluginOrigin::Bridge,
-            manifest: manifest.clone(),
-            path: None,
-        })
-        .collect();
-
-    // Discover local Python plugins
-    let local_plugins = plugins::loader::discover_local_plugins(&app);
-    plugins.extend(local_plugins);
-
-    Ok(plugins)
+fn list_plugins(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
+    state.runtime.get_plugins()
 }
 
+/// Build the params map for an RPC call, optionally embedding the current network data.
+async fn insert_network_data(
+    parameters: &mut serde_json::Map<String, serde_json::Value>,
+    state: &tauri::State<'_, AppData>,
+) {
+    let net = state.network.lock().await;
+    if let Some(ref system) = *net {
+        if let Ok(net_val) = serde_json::to_value(system) {
+            parameters.insert("network".to_string(), net_val);
+        }
+    }
+}
+
+/// Guard: return an error if the export requires network data but none is loaded.
+async fn may_run(
+    export: &PluginExport,
+    state: &tauri::State<'_, AppData>,
+) -> Result<(), PluginError> {
+    if export.require_network_data.unwrap_or(false) {
+        let net = state.network.lock().await;
+        if net.is_none() {
+            return Err(PluginError::RequiredNetworkDataNotFound);
+        }
+    }
+    Ok(())
+}
+
+/// plugin_id  — the `id` field from the plugin's manifest.json
+/// action     — the `id` of the export entry to run
+/// parameters — key/value map matching that export's declared parameters
+/// TODO We should probably create another function but for notification.
 #[tauri::command]
 async fn execute_plugin_action(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppData>,
     plugin_id: String,
     action: String,
-    parameters: Option<serde_json::Value>,
+    mut parameters: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> Result<serde_json::Value, String> {
-    let is_bridge = {
-        let sockets = state.sockets.lock().await;
-        sockets.contains_key(&plugin_id)
-    };
+    let description = state
+        .runtime
+        .get_plugin(&plugin_id)
+        .ok_or_else(|| PluginError::PluginNotFound.to_string())?;
 
-    if is_bridge {
-        let mut sockets_guard = state.sockets.lock().await;
-        let (socket, manifest) = sockets_guard
-            .get_mut(&plugin_id)
-            .ok_or_else(|| format!("Bridge plugin '{}' disconnected", plugin_id))?;
+    let export = description
+        .manifest
+        .get_export(&action)
+        .ok_or_else(|| PluginError::ActionNotFound.to_string())?
+        .clone();
 
-        let is_exporter = matches!(manifest.category, plugins::PluginCategory::Exporter);
-        let is_extraction = matches!(manifest.category, plugins::PluginCategory::Extraction);
+    may_run(&export, &state).await.map_err(|e| e.to_string())?;
 
-        if is_exporter {
-            let net = state.network.lock().await;
-            if net.is_none() {
-                return Err(
-                    "Cannot execute export plugin: No hydraulic network data is loaded. Please import network data first."
-                        .to_string(),
-                );
-            }
+    let needs_network = export.require_network_data.unwrap_or(false);
+
+    if needs_network {
+        if let Some(param) = &mut parameters {
+            insert_network_data(param, &state).await;
         }
+    }
 
-        let export = manifest
-            .exports
-            .iter()
-            .find(|e| e.id == action || e.entrypoint == action)
-            .ok_or_else(|| format!("Action '{}' not found in plugin exports", action))?;
+    // This always creates a Request with ID 1.
+    let payload = RpcRequest::new(
+        export.entrypoint.clone(),
+        parameters,
+        Some(RpcId::Number(1)),
+    );
 
-        // Vou provavelmente remover isso pois me parece uma camada a mais desencessária.
-        let mut params_map = serde_json::Map::new();
-        params_map.insert(
-            "parameters".to_string(),
-            parameters.unwrap_or(serde_json::json!({})),
-        );
+    let response = state
+        .runtime
+        .execute_plugin_action(&plugin_id, payload)
+        .map_err(|e| e.to_string())?;
 
-        {
-            let net = state.network.lock().await;
-            if let Some(ref system) = *net {
-                if let Ok(net_val) = serde_json::to_value(system) {
-                    params_map.insert("network".to_string(), net_val);
+    let updates_network = export.update_network_data.unwrap_or(false);
+    match response {
+        RpcResponse::Error { error, .. } => Err(error.message),
+        RpcResponse::Success { result, .. } => {
+            if updates_network {
+                match serde_json::from_value::<network::System>(result.clone()) {
+                    Ok(system) => {
+                        state.update_network_data(Some(system)).await;
+                        let _ = app.emit(NETWORK_UPDATE_EVENT, true);
+                    }
+                    Err(e) => {
+                        return Err(PluginError::IncorrectNetworkData(e.to_string()).to_string());
+                    }
                 }
             }
+            Ok(result)
         }
-
-        let payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": export.entrypoint,
-            "params": serde_json::Value::Object(params_map),
-            "id": 1
-        });
-
-        let mut payload_bytes = serde_json::to_vec(&payload).map_err(|e| e.to_string())?;
-        payload_bytes.push(b'\n');
-
-        socket
-            .write_all(&payload_bytes)
-            .await
-            .map_err(|e| format!("Failed to send data to bridge: {}", e))?;
-        socket
-            .flush()
-            .await
-            .map_err(|e| format!("Failed to flush data to bridge: {}", e))?;
-
-        let mut buf = vec![0u8; 65536];
-        let n = socket
-            .read(&mut buf)
-            .await
-            .map_err(|e| format!("Failed to read data from bridge: {}", e))?;
-        if n == 0 {
-            return Err("Bridge connection closed by peer".to_string());
-        }
-
-        let raw_response: serde_json::Value = serde_json::from_slice(&buf[..n])
-            .map_err(|e| format!("Invalid JSON response from bridge: {}", e))?;
-
-        if let Some(err_val) = raw_response.get("error") {
-            let err_msg = err_val
-                .get("message")
-                .and_then(|m| m.as_str())
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| err_val.to_string());
-            return Err(err_msg);
-        }
-
-        let result_value = raw_response
-            .get("result")
-            .cloned()
-            .unwrap_or_else(|| raw_response.clone());
-
-        if is_extraction {
-            let system = extract_system_from_value(&result_value)?;
-            let mut net_guard = state.network.lock().await;
-            *net_guard = Some(system);
-            let _ = app.emit("network-data-changed", true);
-        }
-
-        return Ok(result_value);
+        RpcResponse::Notification => Ok(serde_json::Value::Null),
     }
-
-    // 2. Discover local plugins to find matching ID
-    let local_plugins = plugins::loader::discover_local_plugins(&app);
-    let target = local_plugins
-        .into_iter()
-        .find(|p| p.manifest.id == plugin_id)
-        .ok_or_else(|| format!("Plugin '{}' not found", plugin_id))?;
-
-    let is_exporter = matches!(target.manifest.category, plugins::PluginCategory::Exporter);
-    let is_extraction = matches!(
-        target.manifest.category,
-        plugins::PluginCategory::Extraction
-    );
-
-    // If it's an export plugin, block execution if no network data is stored
-    if is_exporter {
-        let net = state.network.lock().await;
-        if net.is_none() {
-            return Err(
-                "Cannot execute export plugin: No hydraulic network data is loaded. Please import network data first."
-                    .to_string(),
-            );
-        }
-    }
-
-    let plugin_dir_str = target
-        .path
-        .ok_or_else(|| format!("Plugin '{}' does not have a local path", plugin_id))?;
-    let plugin_dir = std::path::PathBuf::from(plugin_dir_str);
-
-    // Verify the action exists in exports
-    let export = target
-        .manifest
-        .exports
-        .iter()
-        .find(|e| e.id == action || e.entrypoint == action)
-        .ok_or_else(|| format!("Action '{}' not found in plugin exports", action))?;
-
-    // Build JSON-RPC 2.0 params map
-    let mut params_map = serde_json::Map::new();
-    params_map.insert(
-        "parameters".to_string(),
-        parameters.unwrap_or(serde_json::json!({})),
-    );
-
-    // If network data exists, attach it to params
-    {
-        let net = state.network.lock().await;
-        if let Some(ref system) = *net {
-            if let Ok(net_val) = serde_json::to_value(system) {
-                params_map.insert("network".to_string(), net_val);
-            }
-        }
-    }
-
-    let payload = serde_json::json!({
-        "jsonrpc": "2.0",
-        "method": export.entrypoint,
-        "params": serde_json::Value::Object(params_map),
-        "id": 1
-    });
-
-    let raw_response = plugins::python_runtime::PythonRuntime::execute_action(
-        Some(&app),
-        &plugin_dir,
-        &export.entrypoint,
-        &payload,
-    )
-    .await?;
-
-    let result_value = raw_response
-        .get("result")
-        .cloned()
-        .unwrap_or_else(|| raw_response.clone());
-
-    // If extraction/import plugin, save returned network into AppData
-    if is_extraction {
-        let system = extract_system_from_value(&result_value)?;
-        let mut net_guard = state.network.lock().await;
-        *net_guard = Some(system);
-        let _ = app.emit("network-data-changed", true);
-    }
-
-    Ok(result_value)
 }
 
 #[tauri::command]
@@ -281,38 +157,44 @@ async fn set_network_data(
 ) -> Result<(), String> {
     let mut guard = state.network.lock().await;
     *guard = Some(system);
-    let _ = app.emit("network-data-changed", true);
+    let _ = app.emit(NETWORK_UPDATE_EVENT, true);
     Ok(())
 }
 
 #[tauri::command]
 async fn clear_network_data(
-    app: tauri::AppHandle,
     state: tauri::State<'_, AppData>,
-) -> Result<(), String> {
-    let mut guard = state.network.lock().await;
-    *guard = None;
-    let _ = app.emit("network-data-changed", false);
+    app: tauri::AppHandle,
+) -> Result<(), ()> {
+    state.update_network_data(None).await;
+    let _ = app.emit(NETWORK_UPDATE_EVENT, false);
     Ok(())
 }
 
 #[tauri::command]
 async fn set_window_decorations(app: tauri::AppHandle, decorations: bool) -> Result<(), String> {
     if let Some(w) = app.get_webview_window("plugins") {
-        let _ = w.set_decorations(decorations);
+        if let Err(e) = w.set_decorations(decorations) {
+            warn!("Failed to set window decorations: {e}");
+        }
+    } else {
+        warn!("Failed to get 'plugins' webview window.");
     }
     Ok(())
 }
 
 #[tauri::command]
-async fn exit_app(app: tauri::AppHandle) -> Result<(), String> {
+async fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
-    Ok(())
 }
 
 #[tauri::command]
-fn get_plugins_folder(app: tauri::AppHandle) -> Result<String, String> {
-    plugins::loader::get_user_plugins_dir(&app).map(|p| p.to_string_lossy().to_string())
+fn get_plugins_folder(state: tauri::State<'_, AppData>) -> String {
+    state
+        .runtime
+        .plugin_folder_root
+        .to_string_lossy()
+        .to_string()
 }
 
 fn toggle_window(window: &WebviewWindow) {
@@ -325,20 +207,16 @@ fn toggle_window(window: &WebviewWindow) {
     }
 }
 
-fn set_log(app_handle: &App) {
-    let app_dir = app_handle
-        .path()
-        .app_data_dir()
-        .expect("Failed to get the DataDir directory for Logging");
-
-    fs::create_dir_all(&app_dir).expect("Failed to create the log directory");
-
-    let log_file_path = app_dir.join("debug.log");
+/// Initialise the fern logger. Log lines look like:
+/// `[2026-01-01 10:10:00] [DEBUG] [flux_lib] - message`
+fn set_log(log_dir: &Path) {
+    fs::create_dir_all(log_dir).expect("Failed to create the log directory");
+    let log_file_path = log_dir.join("flux.log");
 
     fern::Dispatch::new()
         .format(|out, message, record| {
             out.finish(format_args!(
-                "[{}] [{}] [{}] - {}\n",
+                "[{}] [{}] [{}] - {}",
                 chrono::Local::now().format("%Y-%m-%d %H:%M:%S"),
                 record.level(),
                 record.target(),
@@ -349,50 +227,65 @@ fn set_log(app_handle: &App) {
         .chain(fern::log_file(log_file_path).expect("Failed to open log file"))
         .apply()
         .expect("Failed to start global logger");
-
-    info!("Flux started. Log system activated");
 }
+
+fn set_tray(app: &mut App) {
+    let plugins_i = MenuItem::with_id(app, "plugins", "Plugins", true, None::<&str>)
+        .expect("Failed to create 'Plugins' tray menu item");
+    let separator = PredefinedMenuItem::separator(app).expect("Failed to create tray separator");
+    let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)
+        .expect("Failed to create 'Quit' tray menu item");
+
+    let menu = Menu::with_items(app, &[&plugins_i, &separator, &quit_i])
+        .expect("Failed to create tray menu");
+
+    let plugins_window = app
+        .get_webview_window("plugins")
+        .expect("Failed to find the 'plugins' webview window");
+
+    TrayIconBuilder::new()
+        .icon(app.default_window_icon().unwrap().clone())
+        .menu(&menu)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            "quit" => app.exit(0),
+            "plugins" => toggle_window(&plugins_window),
+            "restart" => app.request_restart(),
+            _ => {}
+        })
+        .build(app)
+        .unwrap_or_else(|e| panic!("Failed to create the tray icon: {e}"));
+}
+
 
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .setup(move |app| {
-            set_log(&app);
+            let log_dir = app.path().app_log_dir()?;
+            set_log(&log_dir);
+            info!("Flux started. Log system activated.");
 
-            let plugins_i = MenuItem::with_id(app, "plugins", "Plugin", true, None::<&str>)?;
-            let separator = PredefinedMenuItem::separator(app)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-
-            let menu = if !cfg!(debug_assertions) {
-                let restart_i =
-                    MenuItem::with_id(app, "restart", "Restart Flux", true, None::<&str>)?;
-
-                Menu::with_items(app, &[&plugins_i, &separator, &restart_i, &quit_i])?
-            } else {
-                Menu::with_items(app, &[&plugins_i, &separator, &quit_i])?
-            };
+            set_tray(app);
 
             let network = Arc::new(Mutex::new(None));
-            let socket_map = open_socket(network.clone(), Some(app.handle().clone()));
-            app.manage(AppData {
-                sockets: socket_map,
-                network,
-            });
 
-            let plugins = app.get_webview_window("plugins").unwrap();
+            let resource_dir = app
+                .path()
+                .resource_dir()
+                .inspect_err(|e| error!("Failed to find resources path: {e:?}"))?;
 
-            let _ = TrayIconBuilder::new()
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&menu)
-                .on_menu_event(move |app, event| match event.id.as_ref() {
-                    "quit" => app.exit(0),
-                    "plugins" => {
-                        toggle_window(&plugins);
-                    }
-                    "restart" => app.request_restart(),
-                    _ => {}
-                })
-                .build(app)?;
+            // Fix: use push() so the path is actually modified in place.
+            let mut plugin_dir = app.path().app_local_data_dir()?;
+            plugin_dir.push("plugins");
+
+            let mut runtime = PythonRuntime::new(resource_dir, plugin_dir)
+                .inspect_err(|e| error!("Python runtime failed to start: {e:?}"))?;
+
+            // Load and start plugins before handing the runtime to Tauri's state.
+            runtime.load_plugins();
+            runtime.start_plugins(&log_dir);
+
+            app.manage(AppData { runtime, network });
 
             Ok(())
         })
@@ -410,300 +303,4 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-async fn handshake(socket: &mut TcpStream) -> Result<PluginManifest, HandshakeError> {
-    let mut buf = vec![0u8; READ_BYTES_SOCKET];
-
-    let n = socket.read(&mut buf).await?;
-
-    if n == 0 {
-        error!("Conection closed by the client during the Handhsake fase");
-        return Err(HandshakeError::ConnectionClosed);
-    }
-
-    let received_bytes = &buf[..n];
-
-    debug!("{}", String::from_utf8_lossy(received_bytes));
-
-    let manifest: PluginManifest = serde_json::from_slice(received_bytes)?;
-
-    Ok(manifest)
-}
-
-fn open_socket(
-    _network: Arc<Mutex<Option<network::System>>>,
-    _app_handle: Option<tauri::AppHandle>,
-) -> SocketMap {
-    let sockets = Arc::new(Mutex::new(HashMap::new()));
-
-    let local_sockets = sockets.clone();
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-
-        rt.block_on(async {
-            let listener = match TcpListener::bind(ADDRESS).await {
-                Ok(l) => l,
-                Err(err) => {
-                    error!("Could not bind socket on {}: {}", ADDRESS, err);
-                    return;
-                }
-            };
-
-            loop {
-                let (mut socket, addr) = match listener.accept().await {
-                    Ok(conn) => {
-                        info!("New client: {:?}", conn.1);
-                        conn
-                    }
-                    Err(e) => {
-                        error!("Couldn't get client: {:?}", e);
-                        break;
-                    }
-                };
-
-                match handshake(&mut socket).await {
-                    Ok(manifest) => {
-                        info!(
-                            "Handhskae done with plugin: '{}' (ID: {}) v{} from {:?}",
-                            manifest.name, manifest.id, manifest.version, addr
-                        );
-
-                        let mut guard = local_sockets.lock().await;
-                        guard.insert(manifest.id.clone(), (socket, manifest));
-                    }
-                    Err(e) => {
-                        warn!("Handshake with client {:?} failed.", addr);
-                        debug!("Detailed handshake error for {:?}: {:?}", addr, e);
-                    }
-                }
-            }
-        });
-    });
-
-    sockets
-}
-
-#[cfg(test)]
-mod integration_tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_extract_system_from_various_envelopes() {
-        let sample_system_json = serde_json::json!({
-            "Primary": [
-                {
-                    "ID": "PV-01",
-                    "TerrainLevel": 100.0,
-                    "InvertLevel": 50.0,
-                    "Depth": 50.0
-                }
-            ],
-            "Intermediates": [],
-            "Segments": []
-        });
-
-        // 1. Direct
-        let sys1 = extract_system_from_value(&sample_system_json);
-        assert!(sys1.is_ok());
-        assert_eq!(sys1.unwrap().primaries[0].id.0, "PV-01");
-
-        // 2. Wrapped in "system"
-        let wrapped_sys = serde_json::json!({
-            "status": "success",
-            "system": sample_system_json
-        });
-        let sys2 = extract_system_from_value(&wrapped_sys);
-        assert!(sys2.is_ok());
-        assert_eq!(sys2.unwrap().primaries[0].id.0, "PV-01");
-
-        // 3. Wrapped in "network"
-        let wrapped_net = serde_json::json!({
-            "status": "success",
-            "network": sample_system_json
-        });
-        let sys3 = extract_system_from_value(&wrapped_net);
-        assert!(sys3.is_ok());
-        assert_eq!(sys3.unwrap().primaries[0].id.0, "PV-01");
-    }
-
-    #[tokio::test]
-    async fn test_import_and_export_plugins_flow() {
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .to_path_buf();
-        let plugins_dir = root.join("plugins");
-
-        let importer_dir = plugins_dir.join("network-importer");
-        let exporter_dir = plugins_dir.join("excel-exporter");
-
-        if !importer_dir.is_dir() || !exporter_dir.is_dir() {
-            eprintln!("Plugins directories not found, skipping plugin execution test");
-            return;
-        }
-
-        // 1. Execute Network Importer
-        let import_payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "main.py:import_network",
-            "params": {
-                "parameters": { "source": "sample_network" }
-            },
-            "id": 1
-        });
-
-        let import_response = plugins::python_runtime::PythonRuntime::execute_action(
-            None,
-            &importer_dir,
-            "main.py:import_network",
-            &import_payload,
-        )
-        .await
-        .expect("Import action failed");
-
-        let import_result = import_response
-            .get("result")
-            .cloned()
-            .unwrap_or(import_response);
-        let extracted_system = extract_system_from_value(&import_result)
-            .expect("Could not extract system from importer response");
-
-        assert_eq!(extracted_system.primaries.len(), 2);
-        assert_eq!(extracted_system.primaries[0].id.0, "PV-01");
-        assert_eq!(extracted_system.intermediates.len(), 1);
-
-        // 2. Try executing Excel Exporter WITHOUT network -> must fail
-        let empty_export_payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "main.py:run_detailed_export",
-            "params": {
-                "parameters": { "separator": ";" }
-            },
-            "id": 2
-        });
-
-        let fail_result = plugins::python_runtime::PythonRuntime::execute_action(
-            None,
-            &exporter_dir,
-            "main.py:run_detailed_export",
-            &empty_export_payload,
-        )
-        .await;
-
-        assert!(
-            fail_result.is_err(),
-            "Exporter should fail when no network is provided"
-        );
-
-        // 3. Execute Excel Exporter WITH imported network -> must succeed with real stations
-        let net_val = serde_json::to_value(&extracted_system).unwrap();
-        let export_payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "main.py:run_detailed_export",
-            "params": {
-                "parameters": { "separator": ";", "include_headers": true },
-                "network": net_val.clone(),
-                "system": net_val.clone()
-            },
-            "id": 3
-        });
-
-        let export_response = plugins::python_runtime::PythonRuntime::execute_action(
-            None,
-            &exporter_dir,
-            "main.py:run_detailed_export",
-            &export_payload,
-        )
-        .await
-        .expect("Exporter action failed with valid network");
-
-        let export_result = export_response
-            .get("result")
-            .cloned()
-            .unwrap_or(export_response);
-        assert_eq!(export_result["status"], "success");
-        assert_eq!(export_result["rows_count"], 3);
-        let preview = export_result["content_preview"].as_str().unwrap();
-        assert!(preview.contains("PV-01"));
-        assert!(preview.contains("PV-02"));
-        assert!(preview.contains("L-01"));
-
-        // 4. Test XLSX Export
-        let xlsx_payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "main.py:run_export_csv",
-            "params": {
-                "parameters": { "sheet_name": "TestPlanilha" },
-                "network": net_val
-            },
-            "id": 4
-        });
-
-        let xlsx_response = plugins::python_runtime::PythonRuntime::execute_action(
-            None,
-            &exporter_dir,
-            "main.py:run_export_csv",
-            &xlsx_payload,
-        )
-        .await
-        .expect("XLSX export action failed");
-
-        let xlsx_result = xlsx_response
-            .get("result")
-            .cloned()
-            .unwrap_or(xlsx_response);
-        assert_eq!(xlsx_result["status"], "success");
-        assert_eq!(xlsx_result["rows_count"], 3);
-        assert_eq!(xlsx_result["sheet_name"], "TestPlanilha");
-    }
-
-    #[tokio::test]
-    async fn test_bridge_socket_communication_flow() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-
-        // Spawn mock client representing the external bridge plugin
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 4096];
-            let n = socket.read(&mut buf).await.unwrap();
-            let req: serde_json::Value = serde_json::from_slice(&buf[..n]).unwrap();
-            assert_eq!(req["jsonrpc"], "2.0");
-            assert_eq!(req["method"], "main.py:test_bridge_action");
-
-            let res = serde_json::json!({
-                "jsonrpc": "2.0",
-                "result": {
-                    "status": "success",
-                    "message": "Bridge action executed successfully"
-                },
-                "id": req["id"]
-            });
-            let res_bytes = serde_json::to_vec(&res).unwrap();
-            socket.write_all(&res_bytes).await.unwrap();
-        });
-
-        // Backend side connection
-        let mut client_stream = TcpStream::connect(format!("127.0.0.1:{}", port))
-            .await
-            .unwrap();
-        let payload = serde_json::json!({
-            "jsonrpc": "2.0",
-            "method": "main.py:test_bridge_action",
-            "params": {},
-            "id": 1
-        });
-        let payload_bytes = serde_json::to_vec(&payload).unwrap();
-        client_stream.write_all(&payload_bytes).await.unwrap();
-
-        let mut buf = vec![0u8; 4096];
-        let n = client_stream.read(&mut buf).await.unwrap();
-        let response: serde_json::Value = serde_json::from_slice(&buf[..n]).unwrap();
-        assert_eq!(
-            response["result"]["message"],
-            "Bridge action executed successfully"
-        );
-    }
 }
