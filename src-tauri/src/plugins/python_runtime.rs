@@ -14,15 +14,10 @@ const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
 /// which is required for Tauri's managed AppData state.
 pub struct PythonRuntime {
     python_path: PathBuf,
+    log_dir: PathBuf,
     pub plugin_folder_root: PathBuf,
     plugins: Mutex<HashMap<String, Plugin>>,
 }
-
-// SAFETY: PythonRuntime is only mutated (load_plugins / start_plugins) during
-// single-threaded setup before Tauri registers it. After that, all access goes
-// through the inner Mutex, making concurrent reads safe.
-unsafe impl Send for PythonRuntime {}
-unsafe impl Sync for PythonRuntime {}
 
 fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRuntimeError> {
     if cfg!(debug_assertions) {
@@ -81,11 +76,13 @@ impl PythonRuntime {
     pub fn new(
         resource_dir: PathBuf,
         plugin_folder_root: PathBuf,
+        log_dir: PathBuf,
     ) -> Result<Self, PythonRuntimeError> {
         let python_path = resolve_python_executable(resource_dir)?;
         Ok(Self {
             python_path,
             plugin_folder_root,
+            log_dir,
             plugins: Mutex::new(HashMap::new()),
         })
     }
@@ -102,12 +99,12 @@ impl PythonRuntime {
 
     /// Discover plugins on disk and register them (not yet started).
     pub fn load_plugins(&mut self) {
-        match find_plugins(self.plugin_folder_root.clone()) {
+        match find_plugins(&self.plugin_folder_root) {
             Ok(found) => {
                 let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
                 for plugin in found {
                     let id = plugin.manifest.id.clone();
-                    guard.entry(id).or_insert_with(|| Plugin::new(plugin));
+                    let _ = guard.insert(id, Plugin::new(plugin));
                 }
             }
             Err(e) => {
@@ -117,11 +114,11 @@ impl PythonRuntime {
     }
 
     /// Start all loaded plugins (spawn their processes).
-    pub fn start_plugins(&mut self, log_dir: &Path) {
+    pub fn start_plugins(&mut self) {
         let python_path = self.python_path.clone();
         let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
         for (plugin_id, plugin) in guard.iter_mut() {
-            let _ = plugin.start(&python_path, log_dir).inspect_err(|err| {
+            let _ = plugin.start(&python_path, &self.log_dir).inspect_err(|err| {
                 warn!(
                     "Failed to initialize plugin '{}'. Reason: {}",
                     plugin_id, err

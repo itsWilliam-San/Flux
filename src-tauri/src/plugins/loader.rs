@@ -1,6 +1,6 @@
 use log::warn;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path};
 
 use super::PluginManifest;
 use crate::error::AppError;
@@ -11,7 +11,7 @@ const MANIFEST_FILENAME: &str = "manifest.json";
 /// Receives the plugin root folder (the folder that contains other plugin subfolders)
 /// and returns all valid plugin descriptions found inside.
 pub(crate) fn find_plugins(
-    plugin_folder_root: PathBuf,
+    plugin_folder_root: &Path,
 ) -> Result<Vec<PluginDescription>, AppError> {
     let entries = fs::read_dir(&plugin_folder_root)?;
 

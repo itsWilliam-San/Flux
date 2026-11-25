@@ -4,7 +4,6 @@ use crate::plugins::python_runtime::PythonRuntime;
 use log::{error, info, warn};
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -12,42 +11,46 @@ use tauri::{
 };
 use tauri::{App, WebviewWindow};
 
-use tokio::sync::Mutex;
+use std::sync::Mutex;
 
 use crate::error::PluginError;
 use crate::plugins::rpc::{RpcId, RpcRequest, RpcResponse};
 use crate::plugins::PluginExport;
 
 pub struct AppData {
-    pub network: Arc<Mutex<Option<network::System>>>,
-    pub runtime: PythonRuntime,
+    pub network: Mutex<Option<network::System>>,
+    pub runtime: Mutex<PythonRuntime>,
 }
 
 impl AppData {
-    pub async fn update_network_data(&self, system: Option<System>) {
-        let mut net_guard = self.network.lock().await;
+    pub fn update_network_data(&self, system: Option<System>) {
+        let mut net_guard = self.network.lock().unwrap_or_else(|e| e.into_inner());
         *net_guard = system;
     }
 }
 
 const NETWORK_UPDATE_EVENT: &str = "network-data-changed";
-const SHOULD_UPDATE_PLUGIN_LIST_EVENT: &str = "should-update-plugin-list";
 
 mod error;
 mod network;
 mod plugins;
 
 #[tauri::command]
+/// This functions is supposed to update the plugins list, fetching it again.
 fn list_plugins(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
-    state.runtime.get_plugins()
+    let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
+    runtime.load_plugins();
+    runtime.start_plugins();
+
+    runtime.get_plugins()
 }
 
 /// Build the params map for an RPC call, optionally embedding the current network data.
-async fn insert_network_data(
+fn insert_network_data(
     parameters: &mut serde_json::Map<String, serde_json::Value>,
     state: &tauri::State<'_, AppData>,
 ) {
-    let net = state.network.lock().await;
+    let net = state.network.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref system) = *net {
         if let Ok(net_val) = serde_json::to_value(system) {
             parameters.insert("network".to_string(), net_val);
@@ -56,12 +59,12 @@ async fn insert_network_data(
 }
 
 /// Guard: return an error if the export requires network data but none is loaded.
-async fn may_run(
+fn may_run(
     export: &PluginExport,
     state: &tauri::State<'_, AppData>,
 ) -> Result<(), PluginError> {
     if export.require_network_data.unwrap_or(false) {
-        let net = state.network.lock().await;
+        let net = state.network.lock().unwrap_or_else(|e| e.into_inner());
         if net.is_none() {
             return Err(PluginError::RequiredNetworkDataNotFound);
         }
@@ -74,7 +77,7 @@ async fn may_run(
 /// parameters — key/value map matching that export's declared parameters
 /// TODO We should probably create another function but for notification.
 #[tauri::command]
-async fn execute_plugin_action(
+fn execute_plugin_action(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppData>,
     plugin_id: String,
@@ -83,6 +86,7 @@ async fn execute_plugin_action(
 ) -> Result<serde_json::Value, String> {
     let description = state
         .runtime
+        .lock().unwrap_or_else(|e| e.into_inner())
         .get_plugin(&plugin_id)
         .ok_or_else(|| PluginError::PluginNotFound.to_string())?;
 
@@ -92,13 +96,13 @@ async fn execute_plugin_action(
         .ok_or_else(|| PluginError::ActionNotFound.to_string())?
         .clone();
 
-    may_run(&export, &state).await.map_err(|e| e.to_string())?;
+    may_run(&export, &state).map_err(|e| e.to_string())?;
 
     let needs_network = export.require_network_data.unwrap_or(false);
 
     if needs_network {
         if let Some(param) = &mut parameters {
-            insert_network_data(param, &state).await;
+            insert_network_data(param, &state);
         }
     }
 
@@ -110,7 +114,7 @@ async fn execute_plugin_action(
     );
 
     let response = state
-        .runtime
+        .runtime.lock().unwrap_or_else(|e| e.into_inner())
         .execute_plugin_action(&plugin_id, payload)
         .map_err(|e| e.to_string())?;
 
@@ -119,9 +123,9 @@ async fn execute_plugin_action(
         RpcResponse::Error { error, .. } => Err(error.message),
         RpcResponse::Success { result, .. } => {
             if updates_network {
-                match serde_json::from_value::<network::System>(result.clone()) {
+                match serde_json::from_value::<Option<network::System>>(result.clone()) {
                     Ok(system) => {
-                        state.update_network_data(Some(system)).await;
+                        state.update_network_data(system);
                         let _ = app.emit(NETWORK_UPDATE_EVENT, true);
                     }
                     Err(e) => {
@@ -136,37 +140,37 @@ async fn execute_plugin_action(
 }
 
 #[tauri::command]
-async fn has_network_data(state: tauri::State<'_, AppData>) -> Result<bool, String> {
-    let guard = state.network.lock().await;
+fn has_network_data(state: tauri::State<'_, AppData>) -> Result<bool, String> {
+    let guard = state.network.lock().unwrap_or_else(|e| e.into_inner());
     Ok(guard.is_some())
 }
 
 #[tauri::command]
-async fn get_network_data(
+fn get_network_data(
     state: tauri::State<'_, AppData>,
 ) -> Result<Option<network::System>, String> {
-    let guard = state.network.lock().await;
+    let guard = state.network.lock().unwrap_or_else(|e| e.into_inner());
     Ok(guard.clone())
 }
 
 #[tauri::command]
-async fn set_network_data(
+fn set_network_data(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppData>,
     system: network::System,
 ) -> Result<(), String> {
-    let mut guard = state.network.lock().await;
+    let mut guard = state.network.lock().unwrap_or_else(|e| e.into_inner());
     *guard = Some(system);
     let _ = app.emit(NETWORK_UPDATE_EVENT, true);
     Ok(())
 }
 
 #[tauri::command]
-async fn clear_network_data(
+fn clear_network_data(
     state: tauri::State<'_, AppData>,
     app: tauri::AppHandle,
 ) -> Result<(), ()> {
-    state.update_network_data(None).await;
+    state.update_network_data(None);
     let _ = app.emit(NETWORK_UPDATE_EVENT, false);
     Ok(())
 }
@@ -192,6 +196,7 @@ async fn exit_app(app: tauri::AppHandle) {
 fn get_plugins_folder(state: tauri::State<'_, AppData>) -> String {
     state
         .runtime
+        .lock().unwrap_or_else(|e| e.into_inner())
         .plugin_folder_root
         .to_string_lossy()
         .to_string()
@@ -267,7 +272,7 @@ pub fn run() {
 
             set_tray(app);
 
-            let network = Arc::new(Mutex::new(None));
+            let network = Mutex::new(None);
 
             let resource_dir = app
                 .path()
@@ -278,12 +283,14 @@ pub fn run() {
             let mut plugin_dir = app.path().app_local_data_dir()?;
             plugin_dir.push("plugins");
 
-            let mut runtime = PythonRuntime::new(resource_dir, plugin_dir)
+            let mut runtime = PythonRuntime::new(resource_dir, plugin_dir, log_dir)
                 .inspect_err(|e| error!("Python runtime failed to start: {e:?}"))?;
 
             // Load and start plugins before handing the runtime to Tauri's state.
             runtime.load_plugins();
-            runtime.start_plugins(&log_dir);
+            runtime.start_plugins();
+
+            let runtime = Mutex::new(runtime);
 
             app.manage(AppData { runtime, network });
 
