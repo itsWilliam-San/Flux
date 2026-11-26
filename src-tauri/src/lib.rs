@@ -1,10 +1,10 @@
-use crate::{network::System};
+use crate::network::System;
 use crate::plugins::plugin::PluginDescription;
 use crate::plugins::python_runtime::{PythonRuntime, PythonRuntimeEvents};
 use log::{error, info, warn};
-use std::{fs, thread};
 use std::path::Path;
 use std::sync::mpsc::Receiver;
+use std::{fs, thread};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -61,10 +61,7 @@ fn insert_network_data(
 }
 
 /// Guard: return an error if the export requires network data but none is loaded.
-fn may_run(
-    export: &PluginExport,
-    state: &tauri::State<'_, AppData>,
-) -> Result<(), PluginError> {
+fn may_run(export: &PluginExport, state: &tauri::State<'_, AppData>) -> Result<(), PluginError> {
     if export.require_network_data.unwrap_or(false) {
         let net = state.network.lock().unwrap_or_else(|e| e.into_inner());
         if net.is_none() {
@@ -88,7 +85,8 @@ fn execute_plugin_action(
 ) -> Result<serde_json::Value, String> {
     let description = state
         .runtime
-        .lock().unwrap_or_else(|e| e.into_inner())
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .get_plugin(&plugin_id)
         .ok_or_else(|| PluginError::PluginNotFound.to_string())?;
 
@@ -116,7 +114,9 @@ fn execute_plugin_action(
     );
 
     let response = state
-        .runtime.lock().unwrap_or_else(|e| e.into_inner())
+        .runtime
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .execute_plugin_action(&plugin_id, payload)
         .map_err(|e| e.to_string())?;
 
@@ -148,9 +148,7 @@ fn has_network_data(state: tauri::State<'_, AppData>) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn get_network_data(
-    state: tauri::State<'_, AppData>,
-) -> Result<Option<network::System>, String> {
+fn get_network_data(state: tauri::State<'_, AppData>) -> Result<Option<network::System>, String> {
     let guard = state.network.lock().unwrap_or_else(|e| e.into_inner());
     Ok(guard.clone())
 }
@@ -168,10 +166,7 @@ fn set_network_data(
 }
 
 #[tauri::command]
-fn clear_network_data(
-    state: tauri::State<'_, AppData>,
-    app: tauri::AppHandle,
-) -> Result<(), ()> {
+fn clear_network_data(state: tauri::State<'_, AppData>, app: tauri::AppHandle) -> Result<(), ()> {
     state.update_network_data(None);
     let _ = app.emit(NETWORK_UPDATE_EVENT, false);
     Ok(())
@@ -198,7 +193,8 @@ async fn exit_app(app: tauri::AppHandle) {
 fn get_plugins_folder(state: tauri::State<'_, AppData>) -> String {
     state
         .runtime
-        .lock().unwrap_or_else(|e| e.into_inner())
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .plugin_folder_root
         .to_string_lossy()
         .to_string()
@@ -263,7 +259,6 @@ fn set_tray(app: &mut App) {
         .unwrap_or_else(|e| panic!("Failed to create the tray icon: {e}"));
 }
 
-
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -323,8 +318,11 @@ fn create_event_thread(rx: Receiver<PythonRuntimeEvents>, app: tauri::AppHandle)
             match message {
                 PythonRuntimeEvents::PluginStateChanged(plugin_id, state) => {
                     let id = plugin_id.0;
-                    let _ = app.emit_to("plugins", "plugin-status-changed", (id.clone(), state))
-                        .inspect_err(|e| warn!("Failed to send Plugin event from Plugin {id}. Reason: {e}"));
+                    let _ = app
+                        .emit_to("plugins", "plugin-state-changed", (id.clone(), state))
+                        .inspect_err(|e| {
+                            warn!("Failed to send Plugin event from Plugin {id}. Reason: {e}")
+                        });
                 }
             }
         }
