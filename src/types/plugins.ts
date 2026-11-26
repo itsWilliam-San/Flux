@@ -36,8 +36,13 @@ export interface PluginManifest {
 /** What the backend's list_plugins command returns */
 export interface PluginDescription {
     manifest: PluginManifest;
-    /** Absolute path to the plugin directory */
     path: string;
+}
+
+
+export interface PluginInfo {
+  description: PluginDescription;
+  loaded: boolean;
 }
 
 export interface IpcPayload {
@@ -50,4 +55,9 @@ export interface ActionExecutionResult {
     message?: string;
     output?: string;
     [key: string]: unknown;
+}
+
+export enum PluginState {
+  Loaded,
+  Unloaded,
 }

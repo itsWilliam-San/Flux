@@ -1,9 +1,10 @@
-use crate::network::System;
+use crate::{network::System};
 use crate::plugins::plugin::PluginDescription;
-use crate::plugins::python_runtime::PythonRuntime;
+use crate::plugins::python_runtime::{PythonRuntime, PythonRuntimeEvents};
 use log::{error, info, warn};
-use std::fs;
+use std::{fs, thread};
 use std::path::Path;
+use std::sync::mpsc::Receiver;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -37,6 +38,7 @@ mod plugins;
 
 #[tauri::command]
 /// This functions is supposed to update the plugins list, fetching it again.
+/// This should also list states like if a plugins is loaded or not
 fn list_plugins(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
     let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
     runtime.load_plugins();
@@ -283,8 +285,11 @@ pub fn run() {
             let mut plugin_dir = app.path().app_local_data_dir()?;
             plugin_dir.push("plugins");
 
-            let mut runtime = PythonRuntime::new(resource_dir, plugin_dir, log_dir)
+            let (mut runtime, rx) = PythonRuntime::new(resource_dir, plugin_dir, log_dir)
                 .inspect_err(|e| error!("Python runtime failed to start: {e:?}"))?;
+
+            let handle = app.handle().clone();
+            create_event_thread(rx, handle);
 
             // Load and start plugins before handing the runtime to Tauri's state.
             runtime.load_plugins();
@@ -310,4 +315,18 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn create_event_thread(rx: Receiver<PythonRuntimeEvents>, app: tauri::AppHandle) {
+    let _ = thread::spawn(move || {
+        while let Ok(message) = rx.recv() {
+            match message {
+                PythonRuntimeEvents::PluginStateChanged(plugin_id, state) => {
+                    let id = plugin_id.0;
+                    let _ = app.emit_to("plugins", "plugin-status-changed", (id.clone(), state))
+                        .inspect_err(|e| warn!("Failed to send Plugin event from Plugin {id}. Reason: {e}"));
+                }
+            }
+        }
+    });
 }

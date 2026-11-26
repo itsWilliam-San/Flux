@@ -68,13 +68,14 @@ pub mod plugin {
 
     use log::{info, warn};
 
-    use crate::error::{AppError, PluginError};
+    use crate::{error::{AppError, PluginError}, plugins::python_runtime::{PluginId, PythonRuntimeEvents}};
 
     use super::*;
 
 
     pub struct Plugin {
         pub description: PluginDescription,
+        tx: Sender<PythonRuntimeEvents>,
         handle: Arc<Mutex<Option<PluginHandle>>>,
     }
 
@@ -133,9 +134,10 @@ pub mod plugin {
     }
 
     impl Plugin {
-        pub fn new(pd: PluginDescription) -> Self {
+        pub fn new(pd: PluginDescription, tx: Sender<PythonRuntimeEvents>) -> Self {
             Self {
                 description: pd,
+                tx,
                 handle: Arc::new(Mutex::new(None)),
             }
         }
@@ -155,6 +157,7 @@ pub mod plugin {
 
             let plugin_id = self.description.manifest.id.clone();
 
+            let local_tx = self.tx.clone();
             let _ = thread::spawn(move || {
                 let mut child = match command.spawn() {
                     Ok(c) => c,
@@ -231,9 +234,12 @@ pub mod plugin {
                 let _ = _stdout_thread.join();
                 info!("Plugin '{plugin_id}' stopped and I/O threads finished");
 
-                if let Ok(mut guard) = local_handle.lock() {
-                    *guard = None;
-                }
+                let mut guard = local_handle.lock().unwrap_or_else(|e| e.into_inner());
+                *guard = None;
+
+                let _ = local_tx
+                    .send(PythonRuntimeEvents::PluginStateChanged(PluginId(plugin_id.clone()), python_runtime::PluginState::Unloaded))
+                    .inspect_err(|_| warn!("Failed to send Plugin Exited event."));
             });
 
             let plugin_handle = PluginHandle {
@@ -241,10 +247,12 @@ pub mod plugin {
                 stdout_receiver: Mutex::new(rx_res),
             };
 
-            if let Ok(mut guard) = self.handle.lock() {
-                *guard = Some(plugin_handle)
-            }
+            let mut guard = self.handle.lock().unwrap_or_else(|e| e.into_inner());
+            *guard = Some(plugin_handle);
 
+            let _ = self.tx
+                .send(PythonRuntimeEvents::PluginStateChanged(PluginId(self.description.manifest.id.clone()), python_runtime::PluginState::Loaded))
+                .inspect_err(|_| warn!("Failed to send Plugin Loaded event."));
             Ok(())
         }
 

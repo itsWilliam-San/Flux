@@ -6,7 +6,8 @@ use crate::plugins::plugin::{Plugin, PluginDescription};
 use crate::plugins::rpc::{RpcRequest, RpcResponse};
 use std::collections::HashMap;
 use std::path::{PathBuf};
-use std::sync::Mutex;
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{Mutex, mpsc};
 
 const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
 
@@ -17,6 +18,7 @@ pub struct PythonRuntime {
     log_dir: PathBuf,
     pub plugin_folder_root: PathBuf,
     plugins: Mutex<HashMap<String, Plugin>>,
+    tx: Sender<PythonRuntimeEvents>,
 }
 
 fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRuntimeError> {
@@ -77,14 +79,18 @@ impl PythonRuntime {
         resource_dir: PathBuf,
         plugin_folder_root: PathBuf,
         log_dir: PathBuf,
-    ) -> Result<Self, PythonRuntimeError> {
+    ) -> Result<(Self, Receiver<PythonRuntimeEvents>), PythonRuntimeError> {
         let python_path = resolve_python_executable(resource_dir)?;
-        Ok(Self {
+
+        let (tx, rx) = mpsc::channel::<PythonRuntimeEvents>();
+
+        Ok((Self {
             python_path,
             plugin_folder_root,
             log_dir,
             plugins: Mutex::new(HashMap::new()),
-        })
+            tx
+        },rx))
     }
 
     /// Returns a snapshot of all loaded plugin descriptions for the frontend.
@@ -104,7 +110,7 @@ impl PythonRuntime {
                 let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
                 for plugin in found {
                     let id = plugin.manifest.id.clone();
-                    let _ = guard.insert(id, Plugin::new(plugin));
+                    let _ = guard.insert(id, Plugin::new(plugin, self.tx.clone()));
                 }
             }
             Err(e) => {
@@ -142,4 +148,17 @@ impl PythonRuntime {
             .send_request(payload)
             .map_err(PythonRuntimeError::Plugin)
     }
+}
+
+#[derive(Clone, serde::Serialize)]
+pub struct PluginId(pub String);
+
+pub enum PythonRuntimeEvents {
+    PluginStateChanged(PluginId, PluginState)
+}
+
+#[derive(Clone, serde::Serialize)]
+pub enum PluginState {
+    Loaded,
+    Unloaded,
 }
