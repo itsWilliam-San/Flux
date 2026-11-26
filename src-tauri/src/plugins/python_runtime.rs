@@ -5,7 +5,7 @@ use crate::plugins::loader::find_plugins;
 use crate::plugins::plugin::{Plugin, PluginDescription};
 use crate::plugins::rpc::{RpcRequest, RpcResponse};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::{PathBuf};
 use std::sync::Mutex;
 
 const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";

@@ -61,14 +61,9 @@ pub struct PluginParameter {
 
 pub mod plugin {
     use std::{
-        io::{BufReader, Write},
-        path::Path,
-        sync::{
-            mpsc::{self, Receiver, Sender},
-            Mutex,
-        },
-        thread,
-        time::Duration,
+        io::{BufReader, Write}, path::Path, sync::{
+            Arc, Mutex, mpsc::{self, Receiver, Sender},
+        }, thread, time::Duration,
     };
 
     use log::{info, warn};
@@ -77,20 +72,15 @@ pub mod plugin {
 
     use super::*;
 
-    // Wrapping PythonRuntime's HashMap in a std::sync::Mutex makes AppData Send + Sync.
-    // Plugin itself only needs to be Send (threads move it). The Mutex<Receiver> on
-    // PluginHandle already satisfies the shared-access requirement.
 
     pub struct Plugin {
         pub description: PluginDescription,
-        handle: Option<PluginHandle>,
+        handle: Arc<Mutex<Option<PluginHandle>>>,
     }
 
     struct PluginHandle {
         stdin_sender: Sender<RpcRequest>,
         stdout_receiver: Mutex<Receiver<RpcResponse>>,
-        // Keep the join handle so the thread isn't detached
-        _thread_handle: thread::JoinHandle<()>,
     }
 
     impl PluginHandle {
@@ -113,10 +103,6 @@ pub mod plugin {
         }
     }
 
-    // Safety: Mutex<Receiver<_>> is Send but not Sync. We only expose it through
-    // &self methods that lock the mutex, so sharing PluginHandle across threads
-    // via &AppData is safe.
-    unsafe impl Sync for PluginHandle {}
 
     #[derive(Serialize, Deserialize, Clone)]
     pub struct PluginDescription {
@@ -150,7 +136,7 @@ pub mod plugin {
         pub fn new(pd: PluginDescription) -> Self {
             Self {
                 description: pd,
-                handle: None,
+                handle: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -160,6 +146,8 @@ pub mod plugin {
             let (tx_req, rx_req) = mpsc::channel::<RpcRequest>();
             let (tx_res, rx_res) = mpsc::channel::<RpcResponse>();
 
+            let local_handle = Arc::clone(&self.handle);
+
             let plugin_main = self.description.path.join("main.py");
 
             let mut command = base_command(python_path);
@@ -167,7 +155,7 @@ pub mod plugin {
 
             let plugin_id = self.description.manifest.id.clone();
 
-            let thread_handle = thread::spawn(move || {
+            let _ = thread::spawn(move || {
                 let mut child = match command.spawn() {
                     Ok(c) => c,
                     Err(e) => {
@@ -242,22 +230,36 @@ pub mod plugin {
 
                 let _ = _stdout_thread.join();
                 info!("Plugin '{plugin_id}' stopped and I/O threads finished");
+
+                if let Ok(mut guard) = local_handle.lock() {
+                    *guard = None;
+                }
             });
 
-            self.handle = Some(PluginHandle {
+            let plugin_handle = PluginHandle {
                 stdin_sender: tx_req,
                 stdout_receiver: Mutex::new(rx_res),
-                _thread_handle: thread_handle,
-            });
+            };
+
+            if let Ok(mut guard) = self.handle.lock() {
+                *guard = Some(plugin_handle)
+            }
 
             Ok(())
         }
 
         /// Send a request and block until the plugin responds (30 s timeout).
         pub fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, PluginError> {
-            let handle = self.handle.as_ref().ok_or(PluginError::PluginNotStarted)?;
-            handle.send_rpc(request)?;
-            handle.recv_response(Duration::from_secs(30))
+            if let Ok(guard) = self.handle.lock() {
+                if let Some(handle) = &*guard {
+                    handle.send_rpc(request)?;
+                    handle.recv_response(Duration::from_secs(30))
+                } else {
+                    return Err(PluginError::PluginNotStarted);
+                }
+            } else {
+                todo!()
+            }
         }
     }
 }
@@ -291,10 +293,4 @@ pub fn base_command(python_path: &Path) -> Command {
     }
 
     cmd
-}
-
-// TODO: This is meant as a way to PythonRuntime close threads of plugins that stopped working for any reason.
-// This is not used yet but it's something that must be done before Beta Release.
-pub enum PluginEvent {
-    Exited,
 }
