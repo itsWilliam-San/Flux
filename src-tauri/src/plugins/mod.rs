@@ -61,36 +61,35 @@ pub struct PluginParameter {
 
 pub mod plugin {
     use std::{
+        backtrace::Backtrace,
         io::{BufReader, Write},
         path::Path,
         sync::{
             mpsc::{self, Receiver, Sender},
-            Mutex,
+            Arc, Mutex,
         },
         thread,
         time::Duration,
     };
 
-    use log::{info, warn};
+    use log::{debug, info, warn};
 
-    use crate::error::{AppError, PluginError};
+    use crate::{
+        error::{AppError, PluginError},
+        plugins::python_runtime::{PluginId, PythonRuntimeEvents},
+    };
 
     use super::*;
 
-    // Wrapping PythonRuntime's HashMap in a std::sync::Mutex makes AppData Send + Sync.
-    // Plugin itself only needs to be Send (threads move it). The Mutex<Receiver> on
-    // PluginHandle already satisfies the shared-access requirement.
-
     pub struct Plugin {
         pub description: PluginDescription,
-        handle: Option<PluginHandle>,
+        tx: Sender<PythonRuntimeEvents>,
+        handle: Arc<Mutex<Option<PluginHandle>>>,
     }
 
     struct PluginHandle {
         stdin_sender: Sender<RpcRequest>,
         stdout_receiver: Mutex<Receiver<RpcResponse>>,
-        // Keep the join handle so the thread isn't detached
-        _thread_handle: thread::JoinHandle<()>,
     }
 
     impl PluginHandle {
@@ -112,11 +111,6 @@ pub mod plugin {
                 .map_err(|_| PluginError::InternalError("plugin response timed out".into()))
         }
     }
-
-    // Safety: Mutex<Receiver<_>> is Send but not Sync. We only expose it through
-    // &self methods that lock the mutex, so sharing PluginHandle across threads
-    // via &AppData is safe.
-    unsafe impl Sync for PluginHandle {}
 
     #[derive(Serialize, Deserialize, Clone)]
     pub struct PluginDescription {
@@ -147,10 +141,11 @@ pub mod plugin {
     }
 
     impl Plugin {
-        pub fn new(pd: PluginDescription) -> Self {
+        pub fn new(pd: PluginDescription, tx: Sender<PythonRuntimeEvents>) -> Self {
             Self {
                 description: pd,
-                handle: None,
+                tx,
+                handle: Arc::new(Mutex::new(None)),
             }
         }
 
@@ -160,14 +155,20 @@ pub mod plugin {
             let (tx_req, rx_req) = mpsc::channel::<RpcRequest>();
             let (tx_res, rx_res) = mpsc::channel::<RpcResponse>();
 
+            let local_handle = Arc::clone(&self.handle);
+
             let plugin_main = self.description.path.join("main.py");
 
             let mut command = base_command(python_path);
-            command.arg(&plugin_main).arg(log_dir).current_dir(&self.description.path);
+            command
+                .arg(&plugin_main)
+                .arg(log_dir)
+                .current_dir(&self.description.path);
 
             let plugin_id = self.description.manifest.id.clone();
 
-            let thread_handle = thread::spawn(move || {
+            let local_tx = self.tx.clone();
+            let _ = thread::spawn(move || {
                 let mut child = match command.spawn() {
                     Ok(c) => c,
                     Err(e) => {
@@ -242,22 +243,48 @@ pub mod plugin {
 
                 let _ = _stdout_thread.join();
                 info!("Plugin '{plugin_id}' stopped and I/O threads finished");
+
+                let mut guard = local_handle.lock().unwrap_or_else(|e| e.into_inner());
+                *guard = None;
+
+                let _ = local_tx
+                    .send(PythonRuntimeEvents::PluginStateChanged(
+                        PluginId(plugin_id.clone()),
+                        python_runtime::PluginState::Unloaded,
+                    ))
+                    .inspect_err(|_| warn!("Failed to send Plugin Exited event."));
             });
 
-            self.handle = Some(PluginHandle {
+            let plugin_handle = PluginHandle {
                 stdin_sender: tx_req,
                 stdout_receiver: Mutex::new(rx_res),
-                _thread_handle: thread_handle,
-            });
+            };
 
+            let mut guard = self.handle.lock().unwrap_or_else(|e| e.into_inner());
+            *guard = Some(plugin_handle);
+
+            let _ = self
+                .tx
+                .send(PythonRuntimeEvents::PluginStateChanged(
+                    PluginId(self.description.manifest.id.clone()),
+                    python_runtime::PluginState::Loaded,
+                ))
+                .inspect_err(|_| warn!("Failed to send Plugin Loaded event."));
             Ok(())
         }
 
         /// Send a request and block until the plugin responds (30 s timeout).
         pub fn send_request(&self, request: RpcRequest) -> Result<RpcResponse, PluginError> {
-            let handle = self.handle.as_ref().ok_or(PluginError::PluginNotStarted)?;
-            handle.send_rpc(request)?;
-            handle.recv_response(Duration::from_secs(30))
+            if let Ok(guard) = self.handle.lock() {
+                if let Some(handle) = &*guard {
+                    handle.send_rpc(request)?;
+                    handle.recv_response(Duration::from_secs(30))
+                } else {
+                    return Err(PluginError::PluginNotStarted);
+                }
+            } else {
+                todo!()
+            }
         }
     }
 }
@@ -291,10 +318,4 @@ pub fn base_command(python_path: &Path) -> Command {
     }
 
     cmd
-}
-
-// TODO: This is meant as a way to PythonRuntime close threads of plugins that stopped working for any reason.
-// This is not used yet but it's something that must be done before Beta Release.
-pub enum PluginEvent {
-    Exited,
 }

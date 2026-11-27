@@ -1,9 +1,11 @@
 use crate::network::System;
 use crate::plugins::plugin::PluginDescription;
-use crate::plugins::python_runtime::PythonRuntime;
-use log::{error, info, warn};
-use std::fs;
+use crate::plugins::python_runtime::{PythonRuntime, PythonRuntimeEvents};
+use log::{debug, error, info, warn};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::mpsc::Receiver;
+use std::{fs, thread};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::TrayIconBuilder,
@@ -37,10 +39,10 @@ mod plugins;
 
 #[tauri::command]
 /// This functions is supposed to update the plugins list, fetching it again.
-fn list_plugins(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
+/// This should also list states like if a plugins is loaded or not
+fn update_plugins_list(state: tauri::State<'_, AppData>) -> HashMap<String, PluginDescription> {
     let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
-    runtime.load_plugins();
-    runtime.start_plugins();
+    runtime.update_plugins();
 
     runtime.get_plugins()
 }
@@ -59,10 +61,7 @@ fn insert_network_data(
 }
 
 /// Guard: return an error if the export requires network data but none is loaded.
-fn may_run(
-    export: &PluginExport,
-    state: &tauri::State<'_, AppData>,
-) -> Result<(), PluginError> {
+fn may_run(export: &PluginExport, state: &tauri::State<'_, AppData>) -> Result<(), PluginError> {
     if export.require_network_data.unwrap_or(false) {
         let net = state.network.lock().unwrap_or_else(|e| e.into_inner());
         if net.is_none() {
@@ -86,7 +85,8 @@ fn execute_plugin_action(
 ) -> Result<serde_json::Value, String> {
     let description = state
         .runtime
-        .lock().unwrap_or_else(|e| e.into_inner())
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .get_plugin(&plugin_id)
         .ok_or_else(|| PluginError::PluginNotFound.to_string())?;
 
@@ -114,7 +114,9 @@ fn execute_plugin_action(
     );
 
     let response = state
-        .runtime.lock().unwrap_or_else(|e| e.into_inner())
+        .runtime
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .execute_plugin_action(&plugin_id, payload)
         .map_err(|e| e.to_string())?;
 
@@ -146,9 +148,7 @@ fn has_network_data(state: tauri::State<'_, AppData>) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn get_network_data(
-    state: tauri::State<'_, AppData>,
-) -> Result<Option<network::System>, String> {
+fn get_network_data(state: tauri::State<'_, AppData>) -> Result<Option<network::System>, String> {
     let guard = state.network.lock().unwrap_or_else(|e| e.into_inner());
     Ok(guard.clone())
 }
@@ -166,10 +166,7 @@ fn set_network_data(
 }
 
 #[tauri::command]
-fn clear_network_data(
-    state: tauri::State<'_, AppData>,
-    app: tauri::AppHandle,
-) -> Result<(), ()> {
+fn clear_network_data(state: tauri::State<'_, AppData>, app: tauri::AppHandle) -> Result<(), ()> {
     state.update_network_data(None);
     let _ = app.emit(NETWORK_UPDATE_EVENT, false);
     Ok(())
@@ -196,7 +193,8 @@ async fn exit_app(app: tauri::AppHandle) {
 fn get_plugins_folder(state: tauri::State<'_, AppData>) -> String {
     state
         .runtime
-        .lock().unwrap_or_else(|e| e.into_inner())
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
         .plugin_folder_root
         .to_string_lossy()
         .to_string()
@@ -261,7 +259,6 @@ fn set_tray(app: &mut App) {
         .unwrap_or_else(|e| panic!("Failed to create the tray icon: {e}"));
 }
 
-
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
@@ -283,12 +280,13 @@ pub fn run() {
             let mut plugin_dir = app.path().app_local_data_dir()?;
             plugin_dir.push("plugins");
 
-            let mut runtime = PythonRuntime::new(resource_dir, plugin_dir, log_dir)
+            let (mut runtime, rx) = PythonRuntime::new(resource_dir, plugin_dir, log_dir)
                 .inspect_err(|e| error!("Python runtime failed to start: {e:?}"))?;
 
-            // Load and start plugins before handing the runtime to Tauri's state.
-            runtime.load_plugins();
-            runtime.start_plugins();
+            let handle = app.handle().clone();
+
+            create_event_thread(rx, handle);
+            runtime.update_plugins();
 
             let runtime = Mutex::new(runtime);
 
@@ -298,7 +296,7 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            list_plugins,
+            update_plugins_list,
             execute_plugin_action,
             get_plugins_folder,
             has_network_data,
@@ -306,8 +304,37 @@ pub fn run() {
             set_network_data,
             clear_network_data,
             set_window_decorations,
+            start_plugins,
             exit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[tauri::command]
+fn start_plugins(state: tauri::State<'_, AppData>) {
+    if let Ok(mut guard) = state.runtime.lock() {
+        let runtime = &mut *guard;
+        runtime.start_plugins();
+    }
+}
+
+/// This functions starts to read the PythonRuntimeEvents, if you want to get all
+/// events you should probably start the plugins in the frontend after a listener is ready.
+fn create_event_thread(rx: Receiver<PythonRuntimeEvents>, app: tauri::AppHandle) {
+    let _ = thread::spawn(move || {
+        while let Ok(message) = rx.recv() {
+            debug!("Got a message from PythonRuntime. {:?}", message);
+            match message {
+                PythonRuntimeEvents::PluginStateChanged(plugin_id, state) => {
+                    let id = plugin_id.0;
+                    let _ = app
+                        .emit("plugin-state-changed", (id.clone(), state))
+                        .inspect_err(|e| {
+                            warn!("Failed to send Plugin event from Plugin {id}. Reason: {e}")
+                        });
+                }
+            }
+        }
+    });
 }

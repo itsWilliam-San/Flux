@@ -5,8 +5,9 @@ use crate::plugins::loader::find_plugins;
 use crate::plugins::plugin::{Plugin, PluginDescription};
 use crate::plugins::rpc::{RpcRequest, RpcResponse};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::path::PathBuf;
+use std::sync::mpsc::{Receiver, Sender};
+use std::sync::{mpsc, Mutex};
 
 const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
 
@@ -17,6 +18,7 @@ pub struct PythonRuntime {
     log_dir: PathBuf,
     pub plugin_folder_root: PathBuf,
     plugins: Mutex<HashMap<String, Plugin>>,
+    tx: Sender<PythonRuntimeEvents>,
 }
 
 fn resolve_python_executable(resource_dir: PathBuf) -> Result<PathBuf, PythonRuntimeError> {
@@ -77,34 +79,52 @@ impl PythonRuntime {
         resource_dir: PathBuf,
         plugin_folder_root: PathBuf,
         log_dir: PathBuf,
-    ) -> Result<Self, PythonRuntimeError> {
+    ) -> Result<(Self, Receiver<PythonRuntimeEvents>), PythonRuntimeError> {
         let python_path = resolve_python_executable(resource_dir)?;
-        Ok(Self {
-            python_path,
-            plugin_folder_root,
-            log_dir,
-            plugins: Mutex::new(HashMap::new()),
-        })
+
+        let (tx, rx) = mpsc::channel::<PythonRuntimeEvents>();
+
+        Ok((
+            Self {
+                python_path,
+                plugin_folder_root,
+                log_dir,
+                plugins: Mutex::new(HashMap::new()),
+                tx,
+            },
+            rx,
+        ))
     }
 
     /// Returns a snapshot of all loaded plugin descriptions for the frontend.
-    pub fn get_plugins(&self) -> Vec<PluginDescription> {
-        self.plugins
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .values()
-            .map(|plugin| plugin.description.clone())
-            .collect()
+    pub fn get_plugins(&self) -> HashMap<String, PluginDescription> {
+        let mut plugins = HashMap::new();
+
+        let values = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+
+        for plugin in values.values() {
+            let id = plugin.description.manifest.id.clone();
+            plugins.insert(id, plugin.description.clone());
+        }
+
+        plugins
     }
 
-    /// Discover plugins on disk and register them (not yet started).
-    pub fn load_plugins(&mut self) {
+    pub fn update_plugins(&mut self) {
         match find_plugins(&self.plugin_folder_root) {
             Ok(found) => {
-                let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
-                for plugin in found {
-                    let id = plugin.manifest.id.clone();
-                    let _ = guard.insert(id, Plugin::new(plugin));
+                if let Ok(mut guard) = self.plugins.lock() {
+                    for plugin_desc in found {
+                        let id = plugin_desc.manifest.id.clone();
+
+                        guard
+                            .entry(id)
+                            .and_modify(|state| {
+                                let plugin = &mut *state;
+                                plugin.description = plugin_desc.clone();
+                            })
+                            .or_insert_with(|| Plugin::new(plugin_desc, self.tx.clone()));
+                    }
                 }
             }
             Err(e) => {
@@ -118,12 +138,14 @@ impl PythonRuntime {
         let python_path = self.python_path.clone();
         let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
         for (plugin_id, plugin) in guard.iter_mut() {
-            let _ = plugin.start(&python_path, &self.log_dir).inspect_err(|err| {
-                warn!(
-                    "Failed to initialize plugin '{}'. Reason: {}",
-                    plugin_id, err
-                );
-            });
+            let _ = plugin
+                .start(&python_path, &self.log_dir)
+                .inspect_err(|err| {
+                    warn!(
+                        "Failed to initialize plugin '{}'. Reason: {}",
+                        plugin_id, err
+                    );
+                });
         }
     }
 
@@ -142,4 +164,18 @@ impl PythonRuntime {
             .send_request(payload)
             .map_err(PythonRuntimeError::Plugin)
     }
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PluginId(pub String);
+
+#[derive(Debug)]
+pub enum PythonRuntimeEvents {
+    PluginStateChanged(PluginId, PluginState),
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub enum PluginState {
+    Loaded,
+    Unloaded,
 }
