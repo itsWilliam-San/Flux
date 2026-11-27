@@ -14,6 +14,7 @@ echo "Installing dependencies"
 cd src-tauri
 ./python-runtime/bin/python3 -m ensurepip --default-pip || true
 ./python-runtime/bin/python3 -m pip install --upgrade pip
+./python-runtime/bin/python3 -m pip install -e ./sdk-python
 if [ -f "../requirements.txt" ]; then
     ./python-runtime/bin/python3 -m pip install -r ../requirements.txt
 else
