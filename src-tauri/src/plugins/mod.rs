@@ -61,17 +61,25 @@ pub struct PluginParameter {
 
 pub mod plugin {
     use std::{
-        io::{BufReader, Write}, path::Path, sync::{
-            Arc, Mutex, mpsc::{self, Receiver, Sender},
-        }, thread, time::Duration,
+        backtrace::Backtrace,
+        io::{BufReader, Write},
+        path::Path,
+        sync::{
+            mpsc::{self, Receiver, Sender},
+            Arc, Mutex,
+        },
+        thread,
+        time::Duration,
     };
 
-    use log::{info, warn};
+    use log::{debug, info, warn};
 
-    use crate::{error::{AppError, PluginError}, plugins::python_runtime::{PluginId, PythonRuntimeEvents}};
+    use crate::{
+        error::{AppError, PluginError},
+        plugins::python_runtime::{PluginId, PythonRuntimeEvents},
+    };
 
     use super::*;
-
 
     pub struct Plugin {
         pub description: PluginDescription,
@@ -103,7 +111,6 @@ pub mod plugin {
                 .map_err(|_| PluginError::InternalError("plugin response timed out".into()))
         }
     }
-
 
     #[derive(Serialize, Deserialize, Clone)]
     pub struct PluginDescription {
@@ -153,7 +160,10 @@ pub mod plugin {
             let plugin_main = self.description.path.join("main.py");
 
             let mut command = base_command(python_path);
-            command.arg(&plugin_main).arg(log_dir).current_dir(&self.description.path);
+            command
+                .arg(&plugin_main)
+                .arg(log_dir)
+                .current_dir(&self.description.path);
 
             let plugin_id = self.description.manifest.id.clone();
 
@@ -238,7 +248,10 @@ pub mod plugin {
                 *guard = None;
 
                 let _ = local_tx
-                    .send(PythonRuntimeEvents::PluginStateChanged(PluginId(plugin_id.clone()), python_runtime::PluginState::Unloaded))
+                    .send(PythonRuntimeEvents::PluginStateChanged(
+                        PluginId(plugin_id.clone()),
+                        python_runtime::PluginState::Unloaded,
+                    ))
                     .inspect_err(|_| warn!("Failed to send Plugin Exited event."));
             });
 
@@ -250,8 +263,12 @@ pub mod plugin {
             let mut guard = self.handle.lock().unwrap_or_else(|e| e.into_inner());
             *guard = Some(plugin_handle);
 
-            let _ = self.tx
-                .send(PythonRuntimeEvents::PluginStateChanged(PluginId(self.description.manifest.id.clone()), python_runtime::PluginState::Loaded))
+            let _ = self
+                .tx
+                .send(PythonRuntimeEvents::PluginStateChanged(
+                    PluginId(self.description.manifest.id.clone()),
+                    python_runtime::PluginState::Loaded,
+                ))
                 .inspect_err(|_| warn!("Failed to send Plugin Loaded event."));
             Ok(())
         }

@@ -1,7 +1,7 @@
 use crate::network::System;
 use crate::plugins::plugin::PluginDescription;
 use crate::plugins::python_runtime::{PythonRuntime, PythonRuntimeEvents};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use std::path::Path;
 use std::sync::mpsc::Receiver;
 use std::{fs, thread};
@@ -39,11 +39,9 @@ mod plugins;
 #[tauri::command]
 /// This functions is supposed to update the plugins list, fetching it again.
 /// This should also list states like if a plugins is loaded or not
-fn list_plugins(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
+fn update_plugins_list(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
     let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
-    runtime.load_plugins();
-    runtime.start_plugins();
-
+    runtime.update_plugins();
     runtime.get_plugins()
 }
 
@@ -284,11 +282,9 @@ pub fn run() {
                 .inspect_err(|e| error!("Python runtime failed to start: {e:?}"))?;
 
             let handle = app.handle().clone();
-            create_event_thread(rx, handle);
 
-            // Load and start plugins before handing the runtime to Tauri's state.
-            runtime.load_plugins();
-            runtime.start_plugins();
+            create_event_thread(rx, handle);
+            runtime.update_plugins();
 
             let runtime = Mutex::new(runtime);
 
@@ -298,7 +294,7 @@ pub fn run() {
         })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            list_plugins,
+            update_plugins_list,
             execute_plugin_action,
             get_plugins_folder,
             has_network_data,
@@ -306,20 +302,32 @@ pub fn run() {
             set_network_data,
             clear_network_data,
             set_window_decorations,
+            start_plugins,
             exit_app
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
+#[tauri::command]
+fn start_plugins(state: tauri::State<'_, AppData>) {
+    if let Ok(mut guard) = state.runtime.lock() {
+        let runtime = &mut *guard;
+        runtime.start_plugins();
+    }
+}
+
+/// This functions starts to read the PythonRuntimeEvents, if you want to get all
+/// events you should probably start the plugins in the frontend after a listener is ready.
 fn create_event_thread(rx: Receiver<PythonRuntimeEvents>, app: tauri::AppHandle) {
     let _ = thread::spawn(move || {
         while let Ok(message) = rx.recv() {
+            debug!("Got a message from PythonRuntime. {:?}", message);
             match message {
                 PythonRuntimeEvents::PluginStateChanged(plugin_id, state) => {
                     let id = plugin_id.0;
                     let _ = app
-                        .emit_to("plugins", "plugin-state-changed", (id.clone(), state))
+                        .emit("plugin-state-changed", (id.clone(), state))
                         .inspect_err(|e| {
                             warn!("Failed to send Plugin event from Plugin {id}. Reason: {e}")
                         });

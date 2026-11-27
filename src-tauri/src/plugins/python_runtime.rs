@@ -5,9 +5,9 @@ use crate::plugins::loader::find_plugins;
 use crate::plugins::plugin::{Plugin, PluginDescription};
 use crate::plugins::rpc::{RpcRequest, RpcResponse};
 use std::collections::HashMap;
-use std::path::{PathBuf};
+use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Mutex, mpsc};
+use std::sync::{mpsc, Mutex};
 
 const PYTHON_RUNTIME_FOLDER: &str = "python-runtime";
 
@@ -84,13 +84,16 @@ impl PythonRuntime {
 
         let (tx, rx) = mpsc::channel::<PythonRuntimeEvents>();
 
-        Ok((Self {
-            python_path,
-            plugin_folder_root,
-            log_dir,
-            plugins: Mutex::new(HashMap::new()),
-            tx
-        },rx))
+        Ok((
+            Self {
+                python_path,
+                plugin_folder_root,
+                log_dir,
+                plugins: Mutex::new(HashMap::new()),
+                tx,
+            },
+            rx,
+        ))
     }
 
     /// Returns a snapshot of all loaded plugin descriptions for the frontend.
@@ -103,14 +106,21 @@ impl PythonRuntime {
             .collect()
     }
 
-    /// Discover plugins on disk and register them (not yet started).
-    pub fn load_plugins(&mut self) {
+    pub fn update_plugins(&mut self) {
         match find_plugins(&self.plugin_folder_root) {
             Ok(found) => {
-                let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
-                for plugin in found {
-                    let id = plugin.manifest.id.clone();
-                    let _ = guard.insert(id, Plugin::new(plugin, self.tx.clone()));
+                if let Ok(mut guard) = self.plugins.lock() {
+                    for plugin_desc in found {
+                        let id = plugin_desc.manifest.id.clone();
+
+                        guard
+                            .entry(id)
+                            .and_modify(|state| {
+                                let plugin = &mut *state;
+                                plugin.description = plugin_desc.clone();
+                            })
+                            .or_insert_with(|| Plugin::new(plugin_desc, self.tx.clone()));
+                    }
                 }
             }
             Err(e) => {
@@ -124,12 +134,14 @@ impl PythonRuntime {
         let python_path = self.python_path.clone();
         let mut guard = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
         for (plugin_id, plugin) in guard.iter_mut() {
-            let _ = plugin.start(&python_path, &self.log_dir).inspect_err(|err| {
-                warn!(
-                    "Failed to initialize plugin '{}'. Reason: {}",
-                    plugin_id, err
-                );
-            });
+            let _ = plugin
+                .start(&python_path, &self.log_dir)
+                .inspect_err(|err| {
+                    warn!(
+                        "Failed to initialize plugin '{}'. Reason: {}",
+                        plugin_id, err
+                    );
+                });
         }
     }
 
@@ -150,14 +162,15 @@ impl PythonRuntime {
     }
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub struct PluginId(pub String);
 
+#[derive(Debug)]
 pub enum PythonRuntimeEvents {
-    PluginStateChanged(PluginId, PluginState)
+    PluginStateChanged(PluginId, PluginState),
 }
 
-#[derive(Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize)]
 pub enum PluginState {
     Loaded,
     Unloaded,

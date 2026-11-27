@@ -37,57 +37,66 @@ export default function PluginsWindow({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hasStoredNetwork, setHasStoredNetwork] = useState(false);
 
-  const checkNetworkStatus = useCallback(async () => {
-    try {
-      const hasData = await invoke<boolean>("has_network_data");
-      setHasStoredNetwork(hasData);
-    } catch (error) {
-      console.error("Error while checking network status:", error);
-    }
-  }, []);
-
   const fetchPlugins = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await invoke<PluginDescription[]>("list_plugins");
+      const result = await invoke<PluginDescription[]>("update_plugins_list");
+
       let mappedResult: PluginInfo[] = result.map((desc): PluginInfo => ({
         description: desc,
         loaded: false,
       }));
 
       setPlugins(mappedResult);
-      await checkNetworkStatus();
     } catch (error) {
       console.error("Error while loading plugins:", error);
     } finally {
       setLoading(false);
     }
-  }, [checkNetworkStatus]);
-
-  useEffect(() => {
-    fetchPlugins();
-  }, [fetchPlugins]);
+  }, []);
 
   useEffect(() => {
     let unlistenFn: UnlistenFn | undefined;
-    listen<[string, PluginState]>("plugin-state-changed", (event) => {
-      const [pluginId, pluginState] = event.payload;
+    let active = true;
 
-      setPlugins((prev) =>
-        prev.map((plugin) =>
-          plugin.description.manifest.id === pluginId
-            ? { ...plugin, loaded: pluginState === PluginState.Loaded }
-            : plugin,
-        ),
+    async function init() {
+      const unlisten = await listen<[string, PluginState]>(
+        "plugin-state-changed",
+        (event) => {
+          const [pluginId, pluginState] = event.payload;
+          console.log(
+            "A plugin changed state to plugin changed state to %s",
+            pluginState,
+          );
+          setPlugins((prev) =>
+            prev.map((plugin) =>
+              plugin.description.manifest.id === pluginId
+                ? { ...plugin, loaded: pluginState === PluginState.Loaded }
+                : plugin,
+            ),
+          );
+        },
       );
-    }).then((unlisten) => {
+
       unlistenFn = unlisten;
-    });
+
+      await fetchPlugins();
+
+      if (!active) {
+        unlisten();
+        return;
+      }
+
+      invoke("start_plugins");
+    }
+
+    init();
 
     return () => {
+      active = false;
       unlistenFn?.();
     };
-  }, []);
+  }, [fetchPlugins]);
 
   // Listen for network data state changes from the backend
   useEffect(() => {
@@ -171,7 +180,6 @@ export default function PluginsWindow({
           <PluginDetails
             plugin={selected}
             hasStoredNetwork={hasStoredNetwork}
-            onActionSuccess={checkNetworkStatus}
             onSelectTag={handleTagSelect}
           />
         </div>

@@ -134,12 +134,12 @@ export default function PluginList({
           <ul className="flex flex-col gap-1">
             {plugins.map((plugin) => {
               const isSelected = selectedId === plugin.description.manifest.id;
-              const allNeedNetwork =
-                plugin.description.manifest.exports.length > 0 &&
-                plugin.description.manifest.exports.every(
-                  (e) => e.require_network_data === true,
-                );
-              const isBlocked = allNeedNetwork && !hasStoredNetwork;
+
+              console.log(
+                "Plugin %s is loaded? %s",
+                plugin.description.manifest.id,
+                plugin.loaded,
+              );
 
               return (
                 <li key={plugin.description.manifest.id}>
@@ -151,18 +151,13 @@ export default function PluginList({
                       isSelected
                         ? "bg-muted text-foreground font-medium border-border shadow-xs"
                         : "border-transparent hover:bg-muted/60 text-muted-foreground hover:text-foreground",
-                      isBlocked && "opacity-60",
+                      !plugin.loaded && "opacity-60",
                     )}
                   >
                     <div className="flex items-center justify-between gap-1.5">
                       <span className="truncate font-medium text-foreground">
                         {plugin.description.manifest.name}
                       </span>
-                      {isBlocked ? (
-                        <span title={t("common.blocked_title")}>
-                          <Lock className="size-3 text-amber-500/80 shrink-0" />
-                        </span>
-                      ) : null}
                     </div>
 
                     {/* Tag pills inside plugin list item */}

@@ -6,14 +6,12 @@ import PluginHeader from "./PluginHeader";
 interface PluginDetailsProps {
   plugin: PluginInfo | null;
   hasStoredNetwork: boolean;
-  onActionSuccess?: () => void;
   onSelectTag?: (tag: string) => void;
 }
 
 export default function PluginDetails({
   plugin,
   hasStoredNetwork,
-  onActionSuccess,
   onSelectTag,
 }: PluginDetailsProps) {
   const { t } = useTranslation();
@@ -51,7 +49,6 @@ export default function PluginDetails({
                 pluginId={manifest.id}
                 exportItem={item}
                 hasStoredNetwork={hasStoredNetwork}
-                onActionSuccess={onActionSuccess}
               />
             ))}
           </ul>
