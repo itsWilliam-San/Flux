@@ -97,13 +97,17 @@ impl PythonRuntime {
     }
 
     /// Returns a snapshot of all loaded plugin descriptions for the frontend.
-    pub fn get_plugins(&self) -> Vec<PluginDescription> {
-        self.plugins
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .values()
-            .map(|plugin| plugin.description.clone())
-            .collect()
+    pub fn get_plugins(&self) -> HashMap<String, PluginDescription> {
+        let mut plugins = HashMap::new();
+
+        let values = self.plugins.lock().unwrap_or_else(|e| e.into_inner());
+
+        for plugin in values.values() {
+            let id = plugin.description.manifest.id.clone();
+            plugins.insert(id, plugin.description.clone());
+        }
+
+        plugins
     }
 
     pub fn update_plugins(&mut self) {

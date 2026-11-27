@@ -2,6 +2,7 @@ use crate::network::System;
 use crate::plugins::plugin::PluginDescription;
 use crate::plugins::python_runtime::{PythonRuntime, PythonRuntimeEvents};
 use log::{debug, error, info, warn};
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::mpsc::Receiver;
 use std::{fs, thread};
@@ -39,9 +40,10 @@ mod plugins;
 #[tauri::command]
 /// This functions is supposed to update the plugins list, fetching it again.
 /// This should also list states like if a plugins is loaded or not
-fn update_plugins_list(state: tauri::State<'_, AppData>) -> Vec<PluginDescription> {
+fn update_plugins_list(state: tauri::State<'_, AppData>) -> HashMap<String, PluginDescription> {
     let mut runtime = state.runtime.lock().unwrap_or_else(|e| e.into_inner());
     runtime.update_plugins();
+
     runtime.get_plugins()
 }
 

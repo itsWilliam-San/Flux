@@ -33,21 +33,29 @@ export default function PluginsWindow({
   const [search, setSearch] = useState("");
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [plugins, setPlugins] = useState<PluginInfo[]>([]);
+  const [plugins, setPlugins] = useState<Record<string, PluginInfo>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hasStoredNetwork, setHasStoredNetwork] = useState(false);
 
   const fetchPlugins = useCallback(async () => {
     setLoading(true);
     try {
-      const result = await invoke<PluginDescription[]>("update_plugins_list");
+      const result = await invoke<Record<string, PluginDescription>>(
+        "update_plugins_list",
+      );
 
-      let mappedResult: PluginInfo[] = result.map((desc): PluginInfo => ({
-        description: desc,
-        loaded: false,
-      }));
+      setPlugins((prev) => {
+        const next: Record<string, PluginInfo> = {};
 
-      setPlugins(mappedResult);
+        for (const [id, description] of Object.entries(result)) {
+          const existing = prev[id];
+          next[id] = existing
+            ? { ...existing, description }
+            : { description, loaded: false };
+        }
+
+        return next;
+      });
     } catch (error) {
       console.error("Error while loading plugins:", error);
     } finally {
@@ -68,13 +76,21 @@ export default function PluginsWindow({
             "A plugin changed state to plugin changed state to %s",
             pluginState,
           );
-          setPlugins((prev) =>
-            prev.map((plugin) =>
-              plugin.description.manifest.id === pluginId
-                ? { ...plugin, loaded: pluginState === PluginState.Loaded }
-                : plugin,
-            ),
-          );
+
+          setPlugins((prev) => {
+            const current = prev[pluginId];
+            if (!current) {
+              return prev;
+            }
+
+            return {
+              ...prev,
+              [pluginId]: {
+                ...current,
+                loaded: pluginState === PluginState.Loaded,
+              },
+            };
+          });
         },
       );
 
@@ -114,7 +130,7 @@ export default function PluginsWindow({
   // Derive all unique tags from currently loaded plugins
   const availableTags = useMemo(() => {
     const tagSet = new Set<string>();
-    for (const p of plugins) {
+    for (const p of Object.values(plugins)) {
       for (const tag of p.description.manifest.tags) {
         if (tag.trim()) tagSet.add(tag.trim());
       }
@@ -124,28 +140,38 @@ export default function PluginsWindow({
 
   // Filter plugins by both search query and active tag
   const filtered = useMemo(() => {
-    return plugins.filter((plugin) => {
+    const result: Record<string, PluginInfo> = {};
+
+    for (const [key, value] of Object.entries(plugins)) {
       if (
         selectedTag &&
-        !plugin.description.manifest.tags.includes(selectedTag)
+        !value.description.manifest.tags.includes(selectedTag)
       ) {
-        return false;
+        continue;
+      } else {
+        if (matchesSearch(value.description, search)) {
+          result[key] = value;
+        }
       }
-      return matchesSearch(plugin.description, search);
-    });
+    }
+
+    return result;
   }, [plugins, search, selectedTag]);
 
   // Keep selection valid when filtered results change
   useEffect(() => {
     setSelectedId((current) => {
-      if (filtered.some((p) => p.description.manifest.id === current))
+      if (current && filtered[current]) {
         return current;
-      return filtered[0]?.description.manifest.id ?? null;
+      }
+      const firstKey = Object.keys(filtered)[0];
+      return firstKey ?? null;
     });
   }, [filtered]);
 
-  const selected =
-    filtered.find((p) => p.description.manifest.id === selectedId) ?? null;
+  const selected: PluginInfo | null = selectedId
+    ? (filtered[selectedId] ?? null)
+    : null;
 
   const handleTagSelect = useCallback((tag: string | null) => {
     setSelectedTag(tag);
@@ -163,7 +189,7 @@ export default function PluginsWindow({
       ) : (
         <div className="flex min-h-0 flex-1 flex-row">
           <PluginList
-            plugins={filtered}
+            plugins={Object.values(filtered)}
             availableTags={availableTags}
             selectedTag={selectedTag}
             selectedId={selectedId}
