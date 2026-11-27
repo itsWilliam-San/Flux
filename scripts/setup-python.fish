@@ -23,6 +23,8 @@ if test -x $PYTHON_BIN
     echo "Failed to find requirements.txt file"
     exit 1
    end
+
+   $PYTHON_BIN -m pip install -e ./sdk-python
 else
     echo "Erro: Python runtime not found."
     exit 1
