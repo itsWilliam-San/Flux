@@ -3,7 +3,7 @@ import SearchComponent from "../Search";
 import { Button } from "../ui/button";
 import { cn } from "@/lib/utils";
 import { PluginInfo } from "@/types/plugins";
-import { Lock, Settings, Tag, X } from "lucide-react";
+import { Settings, Tag, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { listen, UnlistenFn } from "@tauri-apps/api/event";
 
@@ -30,7 +30,6 @@ export default function PluginList({
   selectedId,
   search,
   loading,
-  hasStoredNetwork,
   showSettingsButton = false,
   onSearchChange,
   onTagSelect,
