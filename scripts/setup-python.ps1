@@ -27,6 +27,7 @@ Invoke-WebRequest -Uri "https://bootstrap.pypa.io/get-pip.py" -OutFile $getPipPa
 $pythonExe = Join-Path $runtimeDir "python.exe"
 & $pythonExe $getPipPath --no-warn-script-location
 Remove-Item $getPipPath
+& $pythonExe -m pip install -e ./sdk-python
 
 if (Test-Path "requirements.txt") {
    Write-Host "Installing python dependencies'"

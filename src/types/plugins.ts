@@ -1,51 +1,62 @@
-export type PluginCategory = "extraction" | "exporter" | (string & {});
-
-export type PluginOrigin = "local" | "bridge";
-
 export interface PluginParameter {
-    name: string;
-    param_type: "string" | "boolean" | "select" | string;
-    label: string;
-    default?: string | boolean | number;
-    options?: Array<string | number | boolean>;
-    required?: boolean;
+  name: string;
+  param_type: "string" | "boolean" | "select" | string;
+  label: string;
+  default?: string | boolean | number;
+  options?: Array<string | number | boolean>;
+  required?: boolean;
 }
 
 export interface PluginExport {
-    id: string;
-    label: string;
-    description: string;
-    entrypoint: string;
-    parameters?: PluginParameter[];
+  id: string;
+  label: string;
+  description: string;
+  entrypoint: string;
+  parameters?: PluginParameter[];
+  require_network_data?: boolean;
+  update_network_data?: boolean;
 }
 
 export interface PluginManifest {
-    name: string;
-    description: string;
-    version: string;
-    author: string;
-    repository?: string;
-    download_url?: string;
-    icon?: string;
-    id: string;
-    category: PluginCategory;
-    exports: PluginExport[];
+  name: string;
+  description: string;
+  version: string;
+  /** Now an array — join with ", " for display */
+  author: string[];
+  /** Free-form tags for filtering and display */
+  tags: string[];
+  repository?: string;
+  download_url?: string;
+  /** asset:// URL or http(s):// URL */
+  icon?: string;
+  id: string;
+  exports: PluginExport[];
 }
 
-export interface PluginDescriptor {
-    origin: PluginOrigin;
-    manifest: PluginManifest;
-    path?: string;
+/** What the backend's list_plugins command returns */
+export interface PluginDescription {
+  manifest: PluginManifest;
+  path: string;
+}
+
+export interface PluginInfo {
+  description: PluginDescription;
+  loaded: boolean;
 }
 
 export interface IpcPayload {
-    action: string;
-    parameters?: PluginParameter[];
+  action: string;
+  parameters?: PluginParameter[];
 }
 
 export interface ActionExecutionResult {
-    status?: string;
-    message?: string;
-    output?: string;
-    [key: string]: unknown;
+  status?: string;
+  message?: string;
+  output?: string;
+  [key: string]: unknown;
+}
+
+export enum PluginState {
+  Loaded = "Loaded",
+  Unloaded = "Unloaded",
 }
